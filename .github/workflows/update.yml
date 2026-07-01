@@ -1,0 +1,52 @@
+name: Update dashboard
+
+on:
+  schedule:
+    - cron: "0 13 * * *"
+    - cron: "0 23 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dashboard-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pull new matches into the store
+        run: python3 update.py
+        env:
+          CE_DB: cooling_economy.db
+          CE_ADDED_FILE: ce_added.txt
+
+      - name: Rebuild dashboard
+        run: python3 build_dashboard.py
+        env:
+          CE_DB: cooling_economy.db
+          CE_OUT: index.html
+
+      - name: Commit and publish if anything changed
+        run: |
+          git config user.name "cooling-economy-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f ce_added.txt
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to publish."
+          else
+            git commit -m "Auto-update: refresh dashboard $(date -u +%Y-%m-%d)"
+            git push
+            echo "Published."
+          fi
