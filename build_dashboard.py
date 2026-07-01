@@ -100,6 +100,21 @@ h1,h2,h3,.disp{font-weight:900;letter-spacing:-.02em;line-height:1.05}
 .tg{display:flex;gap:6px;margin-left:10px}
 .tg button{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-family:inherit;font-weight:800;font-size:12px;width:34px;height:32px;border-radius:8px;cursor:pointer}
 .tg button.lang{width:auto;padding:0 10px}
+.menu{display:flex;flex:1;align-items:center}
+.navtoggle{display:none;margin-left:auto;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;font-size:20px;width:42px;height:38px;border-radius:9px;cursor:pointer;align-items:center;justify-content:center}
+@media(max-width:760px){
+ .tbinner{gap:8px;padding:0 14px;height:56px}
+ .logo{font-size:16px}
+ .navtoggle{display:inline-flex}
+ .menu{position:absolute;top:100%;left:0;right:0;flex:none;flex-direction:column;align-items:stretch;background:var(--navy);border-top:1px solid rgba(255,255,255,.12);box-shadow:0 14px 34px rgba(0,0,0,.45);padding:6px 0 12px;display:none;z-index:40}
+ body.dark .menu{background:#0d1530}
+ .menu.open{display:flex}
+ .nav{flex-direction:column;flex-wrap:nowrap;margin:0;width:100%;gap:0}
+ .nav button{width:100%;text-align:left;padding:14px 20px;font-size:16px;border-radius:0}
+ .nav button.on{background:rgba(255,255,255,.14)}
+ .tg{margin:10px 20px 2px;gap:8px}
+ .tg button{height:40px;min-width:48px;width:auto;font-size:14px;flex:1;max-width:80px}
+}
 .wrap{max-width:1080px;margin:0 auto;padding:24px 18px 60px}
 .tab{display:none}.tab.on{display:block;animation:f .25s ease}
 @keyframes f{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
@@ -195,7 +210,9 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
 </style></head><body>
 <div class="topbar"><div class="tbinner">
   <div class="logo"><span class="chip">FIFA 26</span>⚽ Cooling Economy</div>
-  <div class="nav" id="nav">
+  <button id="navToggle" class="navtoggle" aria-label="Menu" aria-expanded="false">☰</button>
+  <div class="menu" id="menu">
+   <div class="nav" id="nav">
     <button data-t="home" class="on" data-i18n="nav_home"></button>
     <button data-t="analysis" data-i18n="nav_analysis"></button>
     <button data-t="verdict" data-i18n="nav_verdict"></button>
@@ -203,8 +220,9 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
     <button data-t="glossary" data-i18n="nav_glossary"></button>
     <button data-t="survey" data-i18n="nav_survey"></button>
     <button data-t="updates" data-i18n="nav_updates"></button>
+   </div>
+   <div class="tg"><button id="unitBtn" title="units">°F</button><button id="themeBtn" title="theme">☾</button><button id="langBtn" class="lang">ES</button></div>
   </div>
-  <div class="tg"><button id="unitBtn" title="units">°F</button><button id="themeBtn" title="theme">☾</button><button id="langBtn" class="lang">ES</button></div>
 </div>
 <div class="subbar"><span id="subUpdated"></span></div>
 </div>
@@ -935,7 +953,8 @@ function fullRefresh(){
 }
 
 // ---------- wiring ----------
-$('nav').querySelectorAll('button').forEach(b=>b.onclick=()=>showTab(b.dataset.t));
+$('nav').querySelectorAll('button').forEach(b=>b.onclick=()=>{showTab(b.dataset.t);$('menu').classList.remove('open');$('navToggle').setAttribute('aria-expanded','false');});
+$('navToggle').onclick=()=>{const open=$('menu').classList.toggle('open');$('navToggle').setAttribute('aria-expanded',open?'true':'false');};
 $('selMatch').onchange=function(){state.sel=this.value;renderAnalysis();};
 $('segStage').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segStage').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.stage=b.dataset.st;renderAnalysis();});
 $('segHeat').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segHeat').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.heat=b.dataset.h;renderAnalysis();});
