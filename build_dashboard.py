@@ -349,7 +349,7 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
 const D=__DATA__; const G=D.games;
 const $=id=>document.getElementById(id);
 const RED='#c0392b',GREEN='#15924a',GREY='#94a3b8',GOLD='#e7b53c',NAVY='#0a1f44',VIOLET='#6c4bd1';
-let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'dark',unit:'c',more:false};
+let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'light',unit:'c',more:false};
 function toF(c){return c*9/5+32;}
 function tU(c,dec){dec=(dec==null?0:dec);c=Number(c);return state.unit==='f'?(toF(c).toFixed(dec)+'°F'):(c.toFixed(dec)+'°C');}
 let made={analysis:false};
