@@ -1,0 +1,976 @@
+#!/usr/bin/env python3
+"""
+Cooling Economy dashboard builder (tabbed, bilingual EN/ES, light/dark).
+Tabs: Home / Analysis / Verdict / Glossary / Survey. Re-run after each match.
+Charts via Chart.js CDN; font via Google Fonts.
+"""
+import sqlite3, os, json, datetime
+
+DB  = os.environ.get("CE_DB",  "/tmp/cooling_economy.db")
+OUT = os.environ.get("CE_OUT", "/tmp/index.html")
+
+con = sqlite3.connect(DB); con.row_factory = sqlite3.Row
+rows = con.execute("""
+ SELECT m.match_id,m.date,m.stage,m.home_team,m.away_team,m.home_goals,m.away_goals,
+        m.wbgt_kickoff,m.poss_home,m.poss_away,m.shots_home,m.shots_away,
+        m.sot_home,m.sot_away,m.yellow_home,m.yellow_away,m.goal_minutes,m.pen_home,m.pen_away,
+        bm.b1_g_before,bm.b1_g_after,bm.b1_c_before,bm.b1_c_after,bm.b1_s_before,bm.b1_s_after,
+        bm.b1_lc_before,bm.b1_lc_after,bm.b1_cm_before,bm.b1_cm_after,
+        bm.b2_g_before,bm.b2_g_after,bm.b2_c_before,bm.b2_c_after,bm.b2_s_before,bm.b2_s_after,
+        bm.b2_lc_before,bm.b2_lc_after,bm.b2_cm_before,bm.b2_cm_after
+ FROM matches m JOIN break_metrics bm ON m.match_id=bm.match_id ORDER BY m.rowid""").fetchall()
+
+def brk(r,p):
+    return {"g":[r[f"{p}_g_before"],r[f"{p}_g_after"]],"c":[r[f"{p}_c_before"],r[f"{p}_c_after"]],
+            "s":[r[f"{p}_s_before"],r[f"{p}_s_after"]],"lc":[r[f"{p}_lc_before"],r[f"{p}_lc_after"]],
+            "cm":[r[f"{p}_cm_before"],r[f"{p}_cm_after"]]}
+
+mom={r[0]:[r[1],r[2],r[3],r[4]] for r in con.execute("SELECT match_id,pre1,post1,pre2,post2 FROM momentum_windows")} \
+     if con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='momentum_windows'").fetchone() else {}
+
+games=[]
+for r in rows:
+    g={"id":r["match_id"],"date":r["date"],"home":r["home_team"],"away":r["away_team"],
+       "hg":r["home_goals"],"ag":r["away_goals"],"wbgt":r["wbgt_kickoff"],"stage":r["stage"],
+       "possH":r["poss_home"],"possA":r["poss_away"],"shots":[r["shots_home"],r["shots_away"]],
+       "sot":[r["sot_home"],r["sot_away"]],"cards":[r["yellow_home"],r["yellow_away"]],
+       "gmin":r["goal_minutes"] or "","b1":brk(r,"b1"),"b2":brk(r,"b2"),
+       "mom":mom.get(r["match_id"]),
+       "pen":[r["pen_home"],r["pen_away"]] if r["pen_home"] is not None else None}
+    games.append(g)
+con.close()
+
+BASE={"2018":{"buckets":[3,5,5,6,6,1,8,7,3,9,10,7,6,5,10,5,1,9,16],"w":[10,8,13,14],"tot":122},
+      "2022":{"buckets":[3,4,2,2,4,6,8,5,6,13,7,4,9,10,8,3,9,6,11],"w":[4,11,14,17],"tot":120}}
+XGWIN={"goals":[44,30],"xg":[35.89,24.42],"shots":[342,219],"n":64}
+MOMAGG={"n":54,"swing":15.7,"flip":26,"ontop":[19,5],"gainer":[9,15],"postgoals":24}
+# Substitution timing (FBref). buckets = subs per 5-min slice. b1/b2 = subs in the
+# Break-1 (22-25') and Break-2 (67-70') windows. 2022 = no-break baseline (same 5-sub rule).
+SUBAGG={"y2026":{"buckets":[0,0,2,1,0,1,1,4,2,78,10,72,70,66,105,86,107,55,35],"b1":0,"b2":43,"tot":695,"n":76},
+        "y2022":{"buckets":[0,0,1,0,1,0,1,2,2,42,2,38,42,59,63,64,43,43,27],"b1":0,"b2":35,"tot":430,"n":48}}
+# Welfare (ESPN commentary: treatment stoppages + injury subs, broadcast-counted).
+WELFARE={"n":76,"total":191,"perMatch":2.5,"latePct":36,
+         "hot":{"n":26,"ev":1.9,"late":0.77},"cool":{"n":50,"ev":2.8,"late":0.98},
+         "buckets":[5,1,10,6,9,3,5,14,9,13,7,17,15,8,8,9,18,14,20]}
+N=len(games)
+DATA={"updated":datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),"n":N,
+      "games":games,"base":BASE,"xgwin":XGWIN,"momagg":MOMAGG,"subagg":SUBAGG,"welfare":WELFARE}
+
+HTML=r"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cooling Economy · Do World Cup hydration breaks change the game?</title>
+<meta name="description" content="A data-science look at every 2026 FIFA World Cup match: do the mandatory hydration breaks actually change goals, momentum, substitutions and player welfare? Interactive, bilingual, updated per match.">
+<meta name="author" content="Rodolfo López">
+<meta name="theme-color" content="#0a1330">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Cooling Economy">
+<meta property="og:title" content="Cooling Economy: do World Cup hydration breaks change the game?">
+<meta property="og:description" content="Every 2026 World Cup match, tested: do the mandatory water breaks change goals, momentum and player welfare? Interactive dashboard, updated per match.">
+<meta property="og:image" content="__OGIMAGE__">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:url" content="__BASEURL__">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Cooling Economy: do World Cup hydration breaks change the game?">
+<meta name="twitter:description" content="Every 2026 World Cup match, tested: do the mandatory water breaks change the game? Interactive, bilingual, updated per match.">
+<meta name="twitter:image" content="__OGIMAGE__">
+<link rel="icon" href="__FAVICON__">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Cooling Economy","author":{"@type":"Person","name":"Rodolfo López"},"description":"A data-science analysis of whether 2026 FIFA World Cup hydration breaks change match dynamics.","url":"__BASEURL__"}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Saira+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root{--navy:#0a1f44;--gold:#f6c945;--green:#23d18b;--red:#ff4d6d;--violet:#9b6cff;
+--c1:#f6c945;--c2:#2fe0d8;--c3:#ff2e74;--grad:linear-gradient(100deg,#f6c945,#ff2e74 52%,#2fe0d8);
+--bg:#f4f6fb;--card:#ffffff;--ink:#0c1430;--muted:#5b6b8c;--line:#e7ecf4;--soft:#f5f8ff;--glow:none;}
+body.dark{--bg:#070c1a;--card:#111a33;--ink:#eef3ff;--muted:#95a6cc;--line:#26324f;--soft:#0c1530;--glow:0 0 0 1px rgba(255,255,255,.03),0 12px 40px rgba(0,0,0,.45);}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Archivo','Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;transition:background .2s,color .2s;position:relative}
+body.dark::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(60% 40% at 15% 0%,rgba(246,201,69,.10),transparent 60%),radial-gradient(55% 45% at 100% 10%,rgba(255,46,116,.10),transparent 60%),radial-gradient(60% 50% at 50% 110%,rgba(47,224,216,.08),transparent 60%)}
+.wrap,.topbar{position:relative;z-index:1}
+h1,h2,h3,.disp{font-weight:900;letter-spacing:-.02em;line-height:1.05}
+.disp-f{font-family:'Saira Condensed','Archivo',sans-serif}
+.muted{color:var(--muted)}
+.topbar{background:var(--navy);color:#fff;position:sticky;top:0;z-index:30}
+.tbinner{max-width:1080px;margin:0 auto;padding:0 18px;display:flex;align-items:center;gap:14px;height:60px}
+.logo{display:flex;align-items:center;gap:10px;font-family:'Saira Condensed','Archivo',sans-serif;font-weight:800;font-size:19px;letter-spacing:.02em;white-space:nowrap;text-transform:uppercase}
+.logo .chip{background:var(--gold);color:var(--navy);border-radius:6px;padding:3px 8px;font-size:11px;font-weight:900;letter-spacing:.04em}
+.nav{display:flex;gap:2px;margin-left:auto;flex-wrap:wrap}
+.nav button{background:transparent;border:none;color:#b8c6e2;font-family:inherit;font-weight:700;font-size:13.5px;padding:8px 12px;border-radius:8px;cursor:pointer}
+.nav button:hover{color:#fff}.nav button.on{background:rgba(255,255,255,.12);color:#fff}
+.tg{display:flex;gap:6px;margin-left:10px}
+.tg button{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-family:inherit;font-weight:800;font-size:12px;width:34px;height:32px;border-radius:8px;cursor:pointer}
+.tg button.lang{width:auto;padding:0 10px}
+.wrap{max-width:1080px;margin:0 auto;padding:24px 18px 60px}
+.tab{display:none}.tab.on{display:block;animation:f .25s ease}
+@keyframes f{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:0 4px 18px rgba(16,26,48,.05);margin-bottom:18px}
+.eyebrow{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)}
+.h-title{font-family:'Saira Condensed','Archivo',sans-serif;font-size:39px;font-weight:800;letter-spacing:0;line-height:1.02;margin:8px 0 6px;color:var(--ink);text-transform:uppercase}
+.lead{font-size:16px;line-height:1.6;color:var(--muted);max-width:680px}
+.kgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+@media(max-width:760px){.kgrid{grid-template-columns:repeat(2,1fr)}}
+.kpi{position:relative;overflow:hidden;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:17px 16px 15px;box-shadow:0 2px 10px rgba(16,26,48,.06)}
+.kpi::before{content:"";position:absolute;left:0;top:0;width:100%;height:4px;background:var(--grad)}
+body.dark .kpi{box-shadow:var(--glow)}
+.kpi .v{font-family:'Saira Condensed','Archivo',sans-serif;font-size:33px;font-weight:800;color:var(--ink);line-height:1}
+.kpi .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:6px;font-weight:700}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:18px}@media(max-width:820px){.two{grid-template-columns:1fr}}
+.sect-h{font-size:18px;font-weight:800;margin-bottom:3px;color:var(--ink)}
+.sect-s{font-size:12.5px;color:var(--muted);margin-bottom:14px}
+.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px}
+.ctl label{display:block;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:5px}
+select{font-family:inherit;background:var(--card);border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;font-size:14px;font-weight:600;color:var(--ink);min-width:230px}
+.seg{display:inline-flex;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:3px}
+.seg button{font-family:inherit;background:transparent;border:none;color:var(--muted);font-weight:800;font-size:13px;padding:7px 13px;border-radius:8px;cursor:pointer}
+.seg button.on{background:var(--card);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.12)}
+.breaks{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:640px){.breaks{grid-template-columns:1fr}}
+.bcard{border:1px solid var(--line);border-radius:13px;padding:15px;background:var(--soft)}
+.bhead{font-weight:900;color:var(--ink);font-size:15px}.bsub{font-size:11px;color:var(--muted);margin-bottom:9px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:right;padding:6px 4px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left;font-weight:600;color:var(--ink)}
+th{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.delta{font-weight:900}.delta.dn{color:var(--red)}.delta.up{color:var(--green)}.delta.fl{color:var(--muted)}
+.pill{display:inline-block;font-weight:800;font-size:10.5px;padding:2px 9px;border-radius:20px;margin-left:6px}
+.pill.s{background:#e2f4ea;color:var(--green)}.pill.ns{background:var(--soft);color:var(--muted)}.pill.mid{background:#fbedd2;color:#9a6b12}
+.chartbox{position:relative;height:320px;margin-top:12px}.chartbox.sm{height:270px}
+.pitchWrap{margin-top:10px}.pitchWrap svg{width:100%;height:auto;display:block;max-height:340px}
+.pitchprompt{background:linear-gradient(180deg,#1f9d57,#16834a);border-radius:13px;padding:44px 26px;text-align:center;color:#fff;font-weight:700;font-size:15.5px;line-height:1.55}
+.note{font-size:12px;color:var(--muted);line-height:1.6;margin-top:11px;padding-top:11px;border-top:1px dashed var(--line)}
+.readbox{background:var(--soft);border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:10px;padding:14px 18px;font-size:14px;line-height:1.65;color:var(--ink)}
+.banner{background:var(--soft);border:1px solid var(--line);border-radius:12px;padding:12px 15px;font-size:12.5px;color:var(--muted);line-height:1.55}
+.how{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:6px}@media(max-width:760px){.how{grid-template-columns:1fr}}
+.howc{border:1px solid var(--line);border-radius:13px;padding:15px;background:var(--card)}
+.howc .n{width:30px;height:30px;border-radius:8px;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;margin-bottom:9px}
+.howc h4{font-size:15px;color:var(--ink);margin-bottom:4px}.howc p{font-size:12.5px;color:var(--muted);line-height:1.5}
+.verdict{background:var(--navy);color:#fff;border-radius:14px;padding:18px 20px;margin:18px 0;border-left:6px solid var(--gold)}
+.verdict .vlabel{font-size:11px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--gold)}
+.verdict .vbig{font-family:'Saira Condensed','Archivo',sans-serif;font-size:25px;font-weight:800;margin:5px 0 7px;line-height:1.05}.verdict p{font-size:13.5px;line-height:1.6;color:#d7e0f2}
+.vtext{font-size:13.5px;line-height:1.7;color:var(--ink)}
+.vtest{display:flex;align-items:center;gap:14px;padding:13px 2px;border-bottom:1px solid var(--line)}
+.vtest:last-child{border-bottom:none}.vtest .vname{font-weight:700;color:var(--ink);font-size:14px;flex:1}
+.vtest .vnum{font-size:12.5px;color:var(--muted);font-weight:500;margin-top:2px}
+.vstat{font-weight:800;font-size:11px;padding:3px 11px;border-radius:20px;white-space:nowrap}
+.vstat.ok{background:#e2f4ea;color:var(--green)}.vstat.no{background:var(--soft);color:var(--muted);border:1px solid var(--line)}.vstat.mid{background:#fbedd2;color:#9a6b12}
+.hero-svg{width:100%;height:auto;display:block;margin:14px 0 4px}
+.detailbtn{font-family:inherit;background:transparent;border:1.5px solid var(--line);color:var(--ink);font-weight:700;font-size:13.5px;padding:11px 16px;border-radius:10px;cursor:pointer;width:100%;text-align:left}
+.detailbtn:hover{border-color:var(--gold)}
+.gloss{border-bottom:1px solid var(--line);padding:14px 2px}.gloss:last-child{border-bottom:none}
+.gloss .gt{font-weight:800;color:var(--ink);font-size:15px}.gloss .gd{font-size:13px;color:var(--muted);line-height:1.6;margin-top:4px}
+.q{margin-bottom:15px}.q .qt{font-weight:800;font-size:14px;color:var(--ink);margin-bottom:7px}
+.opts{display:flex;gap:8px;flex-wrap:wrap}
+.opts button{font-family:inherit;background:var(--soft);border:1.5px solid var(--line);border-radius:22px;padding:7px 14px;font-size:13px;cursor:pointer;color:var(--ink);font-weight:600}
+.opts button.sel{background:var(--green);color:#fff;border-color:var(--green)}
+textarea{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:10px;font-family:inherit;font-size:13px;resize:vertical;background:var(--card);color:var(--ink)}
+.btn{font-family:inherit;background:var(--navy);color:#fff;border:none;border-radius:10px;padding:11px 18px;font-weight:800;font-size:14px;cursor:pointer}
+.btn.gold{background:var(--gold);color:var(--navy)}
+.tally{font-size:12px;color:var(--muted);font-weight:600}
+.foot{font-size:11px;color:var(--muted);line-height:1.6;margin-top:8px}
+.subbar{background:var(--navy);color:#9fb6da;font-size:11px;font-weight:600;padding:5px 20px;text-align:center;border-top:1px solid rgba(255,255,255,.08)}
+.bracket{display:flex;gap:14px;overflow-x:auto;padding-bottom:8px}
+.bround{min-width:172px;flex:1}
+.bround h4{font-size:11.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;text-align:center;font-weight:800}
+.bmatch{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:10px}
+.bmatch .r{display:flex;justify-content:space-between;gap:8px;font-size:13px;padding:2px 0}
+.bmatch .r.w{font-weight:800;color:var(--ink)}.bmatch .r.l{color:var(--muted)}
+.bempty{border:1px dashed var(--line);border-radius:10px;padding:12px 8px;font-size:12px;color:var(--muted);text-align:center;margin-bottom:10px}
+.up{border-left:3px solid var(--gold);padding:4px 0 4px 14px;margin-bottom:16px}
+.up .ud{font-size:11.5px;font-weight:800;color:var(--gold);letter-spacing:.04em}
+.up .ut{font-size:14px;font-weight:800;color:var(--ink);margin:2px 0 2px}.up .up2{font-size:13px;color:var(--muted);line-height:1.55}
+/* FC vibe */
+body.dark .card{box-shadow:var(--glow);border-color:#223052}
+body.dark .topbar{background:linear-gradient(100deg,#0a1330,#10183a)}
+.gradtext{background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.reveal{opacity:0;transform:translateY(22px);transition:opacity .55s ease,transform .55s ease}
+.reveal.in{opacity:1;transform:none}
+@media(prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+.hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:20px;padding:30px 24px;background:var(--card)}
+body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gradient(160deg,#101a38,#0c1430)}
+.hero::after{content:"";position:absolute;right:-60px;top:-60px;width:240px;height:240px;border-radius:50%;background:var(--grad);filter:blur(60px);opacity:.20;pointer-events:none}
+.hero-q{font-family:'Saira Condensed','Archivo',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:-.01em;line-height:.98;font-size:clamp(34px,8vw,62px)}
+.heatlegend{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.heatlegend .hl{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:20px;padding:6px 12px}
+.heatlegend .dot{width:11px;height:11px;border-radius:50%}
+.scopebanner{display:block;font-size:13px;font-weight:600;line-height:1.5;color:var(--ink);background:var(--soft);border:1px solid var(--line);border-left:4px solid var(--c2);border-radius:0 10px 10px 0;padding:10px 13px;margin-bottom:11px}
+</style></head><body>
+<div class="topbar"><div class="tbinner">
+  <div class="logo"><span class="chip">FIFA 26</span>⚽ Cooling Economy</div>
+  <div class="nav" id="nav">
+    <button data-t="home" class="on" data-i18n="nav_home"></button>
+    <button data-t="analysis" data-i18n="nav_analysis"></button>
+    <button data-t="verdict" data-i18n="nav_verdict"></button>
+    <button data-t="bracket" data-i18n="nav_bracket"></button>
+    <button data-t="glossary" data-i18n="nav_glossary"></button>
+    <button data-t="survey" data-i18n="nav_survey"></button>
+    <button data-t="updates" data-i18n="nav_updates"></button>
+  </div>
+  <div class="tg"><button id="unitBtn" title="units">°F</button><button id="themeBtn" title="theme">☾</button><button id="langBtn" class="lang">ES</button></div>
+</div>
+<div class="subbar"><span id="subUpdated"></span></div>
+</div>
+<div class="wrap">
+
+ <div class="tab on" id="tab-home">
+  <div class="hero">
+   <div class="eyebrow" data-i18n="home_eyebrow"></div>
+   <div class="hero-q gradtext" data-i18n="home_title"></div>
+   <p class="lead" data-i18n="home_lead"></p>
+   <div id="heroArt"></div>
+  </div>
+  <div class="card">
+   <div class="verdict" id="homeVerdict"></div>
+   <div class="kgrid" id="homeKpis"></div>
+   <div class="readbox" id="homeFinding"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="home_howtitle"></div>
+   <div class="how">
+    <div class="howc"><div class="n">1</div><h4 data-i18n="how1_h"></h4><p data-i18n="how1_p"></p></div>
+    <div class="howc"><div class="n">2</div><h4 data-i18n="how2_h"></h4><p data-i18n="how2_p"></p></div>
+   </div>
+   <div class="banner" style="margin-top:16px" data-i18n="home_banner"></div>
+   <div class="foot" data-i18n="home_foot"></div>
+   <div class="foot" style="margin-top:6px">Built by Rodolfo López · <a href="__LINKEDIN__" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">LinkedIn ↗</a></div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-analysis">
+  <div class="card">
+   <div class="controls">
+    <div class="ctl"><label data-i18n="lbl_match"></label><select id="selMatch"></select></div>
+    <div class="ctl"><label data-i18n="lbl_stage"></label><div class="seg" id="segStage"><button data-st="all" class="on" data-i18n="st_all"></button><button data-st="group" data-i18n="st_group"></button><button data-st="ko" data-i18n="st_ko"></button></div></div>
+    <div class="ctl"><label data-i18n="lbl_heat"></label><div class="seg" id="segHeat"><button data-h="all" class="on" data-i18n="h_all"></button><button data-h="hot" data-i18n="h_hot"></button><button data-h="cool" data-i18n="h_cool"></button></div></div>
+   </div>
+   <div class="readbox" id="readbox"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_heat_h"></div><div class="sect-s" data-i18n="an_heat_s"></div>
+   <div id="heatPitch"></div>
+   <div class="heatlegend" id="heatLegend"></div>
+   <div class="note" id="heatNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h"><span data-i18n="an_breaks_h"></span> <span id="scopeLbl" class="pill ns"></span></div>
+   <div class="sect-s" data-i18n="an_breaks_s"></div>
+   <div class="breaks" id="breaks"></div>
+   <div class="note" id="breaksRecon"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_poss_h"></div><div class="sect-s" data-i18n="an_poss_s"></div>
+   <div class="pitchWrap" id="pitchWrap"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_dist_h"></div><div class="sect-s" data-i18n="an_dist_s"></div>
+   <div id="goalStrip" style="display:none"></div>
+   <div class="chartbox"><canvas id="cDist"></canvas></div><div class="note" id="distNote"></div>
+  </div>
+  <button id="moreBtn" class="detailbtn" style="margin-bottom:18px"></button>
+  <div id="moreWrap" style="display:none">
+  <div class="card">
+   <div class="sect-h" data-i18n="an_hist_h"></div><div class="sect-s" data-i18n="an_hist_s"></div>
+   <div class="chartbox"><canvas id="cHist"></canvas></div><div class="note" id="histVerdict"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_xg_h"></div><div class="sect-s" data-i18n="an_xg_s"></div>
+   <div class="chartbox sm"><canvas id="cXg"></canvas></div><div class="note" id="xgNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_mom_h"></div><div class="sect-s" data-i18n="an_mom_s"></div>
+   <div class="kgrid" id="momKpis" style="grid-template-columns:repeat(3,1fr)"></div>
+   <div id="momTug" style="display:none"></div>
+   <div class="chartbox sm" id="momChartBox"><canvas id="cMom"></canvas></div><div class="note" id="momNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_subs_h"></div><div class="sect-s" data-i18n="an_subs_s"></div>
+   <div class="chartbox"><canvas id="cSub"></canvas></div><div class="note" id="subNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_wel_h"></div><div class="sect-s" data-i18n="an_wel_s"></div>
+   <div class="kgrid" id="welKpis" style="grid-template-columns:repeat(3,1fr)"></div>
+   <div class="chartbox sm"><canvas id="cWel"></canvas></div><div class="note" id="welNote"></div>
+  </div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-verdict">
+  <div class="card">
+   <div class="eyebrow" id="vEyebrow"></div>
+   <div class="h-title" id="vAnswer"></div>
+   <div id="vMeter"></div>
+   <p class="lead" id="vLead"></p>
+   <button class="btn" id="shareBtn" style="margin-top:8px"></button>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="v_tests_h"></div><div class="sect-s" data-i18n="v_tests_s"></div>
+   <div id="vTests"></div>
+  </div>
+  <div class="card two">
+   <div><div class="sect-h" data-i18n="v_trend_h"></div><p class="vtext" id="vTrend"></p></div>
+   <div><div class="sect-h" data-i18n="v_next_h"></div><p class="vtext" id="vNext"></p></div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-bracket">
+  <div class="card">
+   <div class="sect-h" data-i18n="br_title"></div><div class="sect-s" data-i18n="br_sub"></div>
+   <div class="bracket" id="bracketWrap"></div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-updates">
+  <div class="card">
+   <div class="sect-h" data-i18n="up_title"></div><div class="sect-s" data-i18n="up_sub"></div>
+   <div id="updatesList"></div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-glossary">
+  <div class="card">
+   <div class="sect-h" data-i18n="gl_title"></div><div class="sect-s" data-i18n="gl_sub"></div>
+   <div id="glossList"></div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-survey">
+  <div class="card">
+   <div class="sect-h" data-i18n="sv_title"></div><div class="sect-s" data-i18n="sv_sub"></div>
+   <div id="survey"></div>
+   <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
+    <button class="btn" id="submitSurvey" data-i18n="sv_submit"></button>
+    <span class="tally" id="tally"></span>
+   </div>
+   <div class="chartbox sm" id="surveyChartBox" style="display:none;margin-top:14px"><canvas id="cSurvey"></canvas></div>
+   <div class="note" data-i18n="sv_note"></div>
+  </div>
+ </div>
+
+</div>
+<script>
+const D=__DATA__; const G=D.games;
+const $=id=>document.getElementById(id);
+const RED='#c0392b',GREEN='#15924a',GREY='#94a3b8',GOLD='#e7b53c',NAVY='#0a1f44',VIOLET='#6c4bd1';
+let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'dark',unit:'c',more:false};
+function toF(c){return c*9/5+32;}
+function tU(c,dec){dec=(dec==null?0:dec);c=Number(c);return state.unit==='f'?(toF(c).toFixed(dec)+'°F'):(c.toFixed(dec)+'°C');}
+let made={analysis:false};
+let distChart,histChart,xgChart,momChart,subChart,welChart,surveyChart;
+const U=D.updated;
+
+// ---------- i18n ----------
+const TR={
+ en:{
+  nav_home:'Home',nav_analysis:'Analysis',nav_verdict:'Verdict',nav_glossary:'Glossary',nav_survey:'Survey',
+  home_eyebrow:'FIFA World Cup 2026 · Hydration breaks',
+  home_title:'Do the hydration breaks<br>change the game?',
+  home_lead:'Every 2026 World Cup match now pauses for a <b>mandatory three-minute hydration break</b> near the 22nd and 67th minute. We track what happens to the football in the ten minutes on either side of those pauses, then check it against two World Cups that had no such breaks.',
+  home_howtitle:'How to use this dashboard',
+  how1_h:'Analysis',how1_p:'What moves around each break: goals, cards, chances, plus momentum and possession. Benchmarked against no-break World Cups. Filter by match, stage or temperature.',
+  how2_h:'Survey',how2_p:'Tell us what you felt watching. Did the game shift after the breaks? Your answers chart live below the questions.',
+  home_banner:'<b>Read this first.</b> Sample is <span class="nn"></span> matches (group stage plus the opening Round of 32), so everything here is preliminary and describes patterns, not proven cause. With breaks in every 2026 match there is no internal control group, so the yardstick is the 2018 and 2022 World Cups, which had no mandatory breaks.',
+  home_foot:'Sources: FBref (events), SofaScore (xG and momentum), Open-Meteo (WBGT estimate). Updated __UPDATED__.',
+  an_heat_h:'How hot is it out there?',
+  an_heat_s:'The "real-feel" heat on the pitch, called WBGT: air temperature, humidity, and sun rolled into one number. Around 28°C and up is tough on players.',
+  heatLeg:()=>['Cooler','Warm','Hot '+tU(28,0)+'+'],
+  heatNote:(avgT,thrT,hotN,coolN,n)=>`Across these ${n} games the pitch feels like about <b>${avgT}</b> on average. We count a game as <b>hot</b> when the real-feel heat is <b>${thrT} or more</b> (${hotN} games so far), and <b>cooler</b> below that (${coolN} games). That is the split the Hot / Cooler filter above uses. Real-feel heat (its proper name is WBGT) matters more than plain air temperature, because humidity and direct sun make the same temperature far harder on the body.`,
+  lbl_match:'Match',opt_all:'All matches (totals)',lbl_stage:'Stage',st_all:'All',st_group:'Group',st_ko:'Knockout',
+  lbl_heat:'Heat',h_all:'All',h_hot:'Hot 🔥',h_cool:'Cooler',
+  an_breaks_h:'What changes around each break',an_breaks_s:'Only the 10 minutes right before each break versus the 10 minutes right after. Goals, cards or subs at any other time in the match are not counted here, so these numbers will not add up to the final score. For every goal, see the goal-timing chart lower down.',
+  recon1:(tot,inw,mins)=>`This match had <b>${tot}</b> goal${tot===1?'':'s'}${mins.length?' (at '+mins.map(m=>m+"'").join(', ')+')':''}. This table only looks at the 10 minutes on each side of the 22' and 67' breaks, so just <b>${inw}</b> land${inw===1?'s':''} inside a window here. The rest were scored at other times. The goal-timing chart below shows all of them.`,
+  reconAll:(tot,inw,n)=>`Heads up: this table counts only the 10 minutes on each side of each break. Across these ${n} matches, <b>${inw}</b> of <b>${tot}</b> goals fell inside a break window; the other ${tot-inw} happened elsewhere in the match, which is why these totals look small. The goal-timing chart below has every goal.`,
+  an_poss_h:'Who had the ball more',an_poss_s:'World Cup games are on neutral ground, so there is no real home team. Pick one match above and this shows how the two teams split the ball over the full game.',
+  possPrompt:'⚽ Pick a single match above to see who kept the ball.<br><span style="font-weight:400;opacity:.85">World Cup games are on neutral ground, so there is no home side to average across all matches.</span>',
+  possNoData:(h,a)=>`⚽ No possession data for ${h} v ${a} yet.<br><span style="font-weight:400;opacity:.85">We have the result and events for this match, but the ball-possession split has not come through. Try another match.</span>`,
+  wideNote:(n)=>`<div class="scopebanner">📊 Whole-tournament view. This measure is not available match by match, so it uses the full sample and does not change when you pick a single game.</div>`,
+  an_dist_h:'When the goals get scored',an_dist_s:'Every goal, grouped into 5-minute slices. The dashed lines are the breaks. If breaks slow the game down, you would see fewer goals right after them.',
+  an_hist_h:'2026 vs the last two World Cups (no breaks)',an_hist_s:'When goals were scored. Red is 2026; grey is the average of the two no-break World Cups. If red dips at the breaks and grey does not, the breaks are doing something.',
+  histLeg1:'No-break years (2018 & 2022)',histLeg2:'2026 (with breaks)',
+  an_xg_h:'Fewer goals after a break: unlucky, or a quieter game?',an_xg_s:'Goals can dip for two reasons: teams miss good chances (bad luck), or they simply make fewer good chances (a quieter game). To tell them apart we look at chance quality, called expected goals or xG, which scores how likely each shot was to go in. Each bar is the 10 minutes after a break as a share of the 10 minutes before. 100% means no change; lower means less after the break.',
+  an_mom_h:'Does the team on top change after a break?',an_mom_s:'Momentum means which team is pushing forward. When it flips after a break, does that team go on to score?',
+  an_subs_h:'Do coaches use the breaks to make subs?',an_subs_s:'When substitutions happen, by 5-minute slice. The dashed lines are the breaks. If coaches used them as a free sub window, you would see a bump right at them.',
+  subLeg26:'2026 (with breaks)',subLeg22:'2022 (no breaks)',
+  subNote:(s)=>`No. The early break at 22' sees almost no subs (${s.b1} in the whole tournament), and the second only has subs because it lands in the normal 60-to-75 minute window. The gold 2022 line, which had no breaks, sits almost on top of 2026: same flat spot at 22', same half-time and late spikes. So the breaks changed nothing about when coaches sub. 2026: ${s.n} games; 2022: 48.`,
+  an_wel_h:'Do the breaks protect players in the heat?',an_wel_s:'Injury stoppages and injury subs per game, counted from live commentary. Are hot games harder on the players?',
+  welLeg:()=>['Hot games (real-feel '+tU(28,0)+'+)','Cooler games'],welAxis:['Whole game','Last 20 min'],
+  welK:['Stoppages per game','Share in the last 20 min','Hot vs cool, per game'],
+  welNote:(w)=>`Counted from live commentary (treatment stoppages and injury subs), the same way published World Cup injury studies do it. Treatments climb late as legs tire. The surprise: <b>hot games are not harder on players</b>, they have fewer stoppages, not more (${w.hot.ev} vs ${w.cool.ev} per game). That fits the breaks doing their job in heat, though slower, calmer hot games could explain it too. Versus 2022 (no breaks), the late-game share of injuries is about the same (34% then vs ${w.latePct}% now), so the breaks did not change when injuries strike. Broadcast-counted, not official medical data; we compare shares, not raw counts, since how fully each match is narrated differs by year.`,
+  v_tests_h:'Three ways to check it',v_tests_s:'Each one asks the same question a different way: is the game really quieter right after a break? Green means it looks real, amber means maybe, grey means it could just be chance.',
+  v_trend_h:'How the picture has moved',v_next_h:'What would change the answer',
+  gl_title:'Plain-language glossary',gl_sub:'Every term on this dashboard, spelled out. No stats degree required.',
+  sv_title:'Did the breaks change how the game felt?',sv_sub:'Vote once and watch how everyone answered, live. Results are shared across all visitors and update as people vote.',
+  sv_submit:'Submit response',sv_export:'Export CSV',
+  sv_note:'Answers are pooled anonymously across everyone who visits, and the chart updates live. Counts only, no names or comments are stored. One vote per browser.',
+  nav_bracket:'Bracket',nav_updates:'Updates',
+  br_title:'Knockout bracket',br_sub:'The road to the final. Results fill in as the knockout rounds are played.',
+  up_title:'Update log',up_sub:'What has changed in this study and dashboard, newest first.',
+  share:'Copy the verdict',shareDone:'Copied. Paste it anywhere.',
+  subUpdated:(d,n)=>`Updated ${d} · ${n} matches`,brComing:'Coming up',pens:'decided on penalties',
+  rounds:{R32:'Round of 32',R16:'Round of 16',QF:'Quarter-finals',SF:'Semi-finals',F:'Final'},
+  shareText:(ans,pre,post,n)=>`Cooling Economy · FIFA World Cup 2026\nDo hydration breaks change the game? ${ans}\nGoals in the 10 min before vs after the breaks: ${pre} vs ${post}, across ${n} matches.`,
+  updates:[
+   ['2026-07-01','More knockout games','Added Mexico 2-0 Ecuador, another hot one, so all three June 30 Round-of-32 games are in. 79 matches now, and the fan survey has a cleaner live results chart.'],
+   ['2026-06-30','Today\'s matches added','Added the June 30 Round-of-32 games (Côte d\'Ivoire 1-2 Norway, France 3-0 Sweden), both played in real-feel heat above 29°C. Now 78 matches in the store.'],
+   ['2026-06-30','New visuals + clearer wording','Added a momentum tug-of-war and a goals-on-the-pitch timeline for single matches, a °C/°F switch, and a plain-English rewrite of the chance-quality (xG) panel. The break tables now show how they reconcile with the final score.'],
+   ['2026-06-30','No-break baselines','Added 2022 (no breaks) to the substitution and welfare panels. Sub timing is identical year to year, and the late-injury share barely moves.'],
+   ['2026-06-30','Player welfare','New panel on injuries and treatments by heat, counted from live commentary. Hot games are not harder on players, if anything they have fewer stoppages.'],
+   ['2026-06-30','Substitution timing','New panel asking if coaches use the breaks to make subs. They do not: the early break at 22′ sees almost no subs, and the late one only matches normal subbing.'],
+   ['2026-06-30','Knockouts and penalties','Added the opening Round of 32 matches, a knockout bracket, and the penalty-shootout winners. The post-break dip softened further as the sample grew.'],
+   ['2026-06-29','Plain-language pass','Swapped statistics shorthand for plain verdicts (Looks real, Could be something, Likely just chance) and added a glossary.'],
+   ['2026-06-28','Momentum added','Brought in minute-level momentum to test whether a shift in control after a break leads to goals. It does not.'],
+   ['2026-06-27','Baselines and xG','Benchmarked 2026 against the no-break 2018 and 2022 World Cups and confirmed chance quality (xG) drops with goals.'],
+   ['2026-06-27','Launch','First build: goal, card and sub windows around each break across the group stage, with a heat filter.'],
+  ],
+  // dynamic
+  kMatches:'🏟️ Matches',kGoals:'⚽ Goals',kGpm:'🎯 Goals / match',kWbgt:'🔥 Typical heat',
+  meterLeft:'Could be chance',meterRight:'Looks real',moreShow:'Show the deeper analysis  ▾',moreHide:'Hide the deeper analysis  ▴',
+  metrics:['⚽ Goals','🟨 Cards','🔁 Subs','🔀 Lead changes','↩️ Comeback goals'],
+  before:'Before',after:'After',beforeAfter:'10 min before → after',
+  hvLabel:'The verdict so far',
+  hvBig:'A faint cooling after the whistle, nothing the numbers will vouch for yet.',
+  hvBody:(pre,post)=>`Play eases a touch right after each break: ${pre} goals in the ten minutes before versus ${post} after, with chance quality leaning the same way. But that is the kind of gap you would get by chance next to the no-break World Cups, and it has faded as more matches arrived. Straight answer: no, not in any way we can stand behind today. A hint worth watching, not a proven effect.`,
+  hvFinding:(n)=>`<b>Why "watch this space" and not "case closed."</b> At 66 group matches the post-break dip looked sharper, and the hot-weather split briefly reached the usual bar. With ${n} matches in, it has flattened back toward the no-break pattern, which is how a small-sample fluke behaves. So the evidence for a real break effect is thinner now, not thicker. The knockouts decide it.`,
+  scope1:'1 match',
+  distNoteSingle:"Single match: just this game's goals.",
+  distNoteAll:'Goals normally pick up later in each half. So if the breaks did nothing, the dashed lines should not line up with a dip.',
+  histBase:(post,tot,pct)=>`<b>No-break baseline:</b> ${post} of ${tot} break-window goals fall <i>after</i> the mark (${pct}%). Scoring climbs there, the normal rhythm. `,
+  histFew:(n)=>`This selection has too few break-window goals (${n}) to compare.`,
+  histSel:(post,n,pct,below,verdict)=>`<b>This selection:</b> ${post} of ${n} land after (${pct}%). `+(below?`2026 dips below the no-break years here. <b>${verdict}.</b>`:`No real dip below the no-break years here.`),
+  xgNote:(n)=>`After a break, goals, chance quality (xG) and shots all fall to about two-thirds of the level just before it. Here is the tell: <b>chance quality drops just as much as the goals do</b>. If it were only bad luck in front of goal, the good chances would still be there and only the goals would fall. Instead teams genuinely create less right after the whistle. From ${n} group games.`,
+  momK:['How much momentum moves','How often the top team changes','Goals right after the breaks'],
+  momNote:(M)=>`The team on top really does change a lot: in about 1 in 4 breaks (<b>${M.flip}%</b>), the other team takes over. But taking control does not mean you score. The goals after a break go to whoever is on top <b>at that moment</b> (${M.ontop[0]} of ${M.postgoals}), not to the team that just grabbed momentum (${M.gainer[0]}). With only ${M.postgoals} post-break goals so far, read this part lightly. From 54 group games.`,
+  tugB1:'Around the 22\' break (before → after)',tugB2:'Around the 67\' break (before → after)',
+  tugKey:'○ before the break     ⚽ after the break',
+  tugNote:(g)=>{const m=g.mom,side=v=>v>3?g.home:(v<-3?g.away:'neither side'),fl=(a,b)=>((a>3&&b<-3)||(a<-3&&b>3)),flipped=fl(m[0],m[1])||fl(m[2],m[3]);
+   return `The ball shows who was pushing forward. After the 22' break, <b>${side(m[1])}</b> had the momentum; after the 67' break, <b>${side(m[3])}</b>. ${flipped?'The momentum flipped sides across a break in this game.':'The same side kept pushing across both breaks.'} Further right (gold) means ${g.home} on top; further left (blue) means ${g.away}.`;},
+  momLabels:['Team on top AFTER break','Team that GAINED momentum'],momTitle:(t)=>`post-break goals scored (of ${t})`,
+  readSingle:(g,m)=>`<b>${flag(g.home)} ${g.home} ${g.hg}–${g.ag} ${g.away} ${flag(g.away)}</b> · ${g.date} · ${tU(g.wbgt,1)} heat.${m} One match is anecdote, so switch to All matches for the pattern.`,
+  readAll:(pre,post)=>`<b>Does the break change the game, or is this just normal?</b> Goals go ${pre}→${post} around the breaks here. Goals naturally pick up later in a half, so the comparison further down is the real test. The effect is clearest in <b>hot games</b>, so try the Hot filter.`,
+  momTxt:(m,t)=>` Momentum (+ means ${t} pushing forward). B1 ${fmt(m[0])}→${fmt(m[1])}, B2 ${fmt(m[2])}→${fmt(m[3])}.`,
+  distX:'match minute',distY:'goals',histX:'match minute',histY:'% of goals',xgX:'after ÷ before',
+  vEyebrow:(n)=>`State of play · as of ${U} · ${n} matches`,
+  vYes:'Probably yes: a measurable cooling after the whistle.',vNo:'Not yet. Any effect is faint and unproven.',
+  vLead:(pre,post,n)=>`Across ${n} matches, goals in the ten minutes after a break (${post}) trail the ten before (${pre}). The lean is there on the page, but none of the three checks below is strong enough to trust yet, so the honest read today is a mild tendency, not a settled effect.`,
+  vt1:'Within 2026 matches',vt2:()=>'Hot matches only (real-feel '+tU(28,0)+'+)',vt3:'Versus no-break 2018 & 2022',
+  vt1n:(a,b)=>`${a} goals before vs ${b} after the breaks`,vt2n:(a,b,n)=>`${a} before vs ${b} after, ${n} matches`,vt3n:(pct)=>`${pct}% of break-window goals land after, vs 55% with no breaks`,
+  cReal:'Looks real',cMaybe:'Could be something',cChance:'Likely just chance',vstatNa:'Not enough games yet',
+  vTrend:'At 66 group matches the dip looked sharper and the hot-weather split briefly cleared the bar. Adding the June 27 finale and the first knockout games pulled it back toward the no-break pattern. An effect that shrinks as matches pile up is behaving like noise, so confidence has gone down, not up.',
+  vNext:'A clean result would need the dip to hold as the knockouts add matches, the hot-match gap to reopen, and xG to keep falling in step with goals. The daily update refreshes these numbers after each match day.',
+  gloss:[
+   ['Looks real / Could be something / Likely just chance','Our plain verdicts on whether a gap can be trusted. "Looks real" means a gap that size would rarely happen by luck. "Could be something" means there is a hint, but it might still be chance. "Likely just chance" means gaps that size turn up at random all the time. They replace the technical confidence score, so you do not need the maths.'],
+   ['Real-feel heat','How hot it actually feels on the pitch, not just the number on a thermometer. It combines air temperature, humidity, and direct sun into one figure, because a humid, sunny 30°C is far harder on players than a dry, breezy 30°C. Its technical name is WBGT (wet-bulb globe temperature), and it is what FIFA watches to decide heat measures. Around 28°C and up counts as hot here. The Heat filter uses it to split hot games from cooler ones.'],
+   ['Neutral ground (no home team)','Almost every World Cup match is at a neutral stadium, so there is no real home advantage. The fixture still names one team first, but that does not make them the home side. The only exceptions are the hosts (USA, Canada, Mexico) playing in their own country.'],
+   ['Injury stoppage','When play pauses for a player to be treated, or a sub is made because of an injury. We count these from live match commentary, the same method published World Cup injury studies use. It is a broadcast count, not official medical data.'],
+   ['xG (expected goals)','A 0 to 1 score for how likely each shot was to be a goal, based on its position and type. Adding them up shows how many goals a team "should" have scored, separating chance quality from finishing luck.'],
+   ['Hydration break','A mandatory three-minute pause near the 22nd and 67th minute of every 2026 match, so players can drink and cool down.'],
+   ['Before / after window','The ten minutes just before a break versus the ten just after. We compare the two to see what the break changes.'],
+   ['Momentum','SofaScore\'s minute-by-minute read of which team is pressing and threatening. Positive means the home side is on top. It is a stand-in for possession and territory, not the exact possession percentage.'],
+   ['Momentum swing','How much that momentum number moves from before a break to after. A bigger swing means the balance of play shifted more.'],
+   ['Lead change','A goal that flips who is ahead, an equaliser or a go-ahead goal.'],
+   ['Comeback goal','A goal scored by the team that was losing at that moment.'],
+   ['Group stage vs Knockout','Group stage is the opening round-robin. Knockout is the single-elimination phase that follows, usually tighter and lower-scoring. The Stage toggle switches between them.'],
+   ['No-break baseline','The 2018 and 2022 World Cups, which had no mandatory breaks. They show the normal pattern, so we can tell whether 2026 is different.'],
+  ],
+  sq:[
+   {id:'watched',q:'Have you watched 2026 World Cup matches?',o:['Yes, several','A few','No']},
+   {id:'b1feel',q:"After Break 1 (around the 22nd minute), did the game feel different?",o:['More intense','Less intense','No change','Did not notice']},
+   {id:'b2feel',q:"After Break 2 (around the 67th minute), did the game feel different?",o:['More intense','Less intense','No change','Did not notice']},
+   {id:'whobenefits',q:'Who do the breaks help most?',o:['The leading team','The trailing team','Neither']},
+   {id:'purpose',q:'What are the breaks mainly for?',o:['Player welfare','TV ad money','Both','Not sure']},
+   {id:'fair',q:'Do mandatory breaks feel fair to the contest?',o:['Yes','No','Not sure']}
+  ],
+  svComment:'Anything else you noticed?',svPlaceholder:'Optional',svAfter1:'After Break 1',svAfter2:'After Break 2',
+  svTally:(n)=>`${n} response${n===1?'':'s'} so far`,svNone:'No responses yet.',svThanks:'Thanks! Your vote is in ✓',svErr:'Could not send, try again',
+  svFeel:['More intense','Less intense','No change','Did not notice'],
+ },
+ es:{
+  nav_home:'Inicio',nav_analysis:'Análisis',nav_verdict:'Veredicto',nav_glossary:'Glosario',nav_survey:'Encuesta',
+  home_eyebrow:'Copa del Mundo 2026 · Pausas de hidratación',
+  home_title:'¿Las pausas de hidratación<br>cambian el partido?',
+  home_lead:'Cada partido del Mundial 2026 se detiene por una <b>pausa obligatoria de hidratación de tres minutos</b> cerca del minuto 22 y del 67. Seguimos qué le pasa al juego en los diez minutos a cada lado de esas pausas y lo comparamos con dos Mundiales que no tuvieron esos pausas.',
+  home_howtitle:'Cómo usar este tablero',
+  how1_h:'Análisis',how1_p:'Qué se mueve alrededor de cada pausa: goles, tarjetas, ocasiones, más momentum y posesión. Comparado con Mundiales sin pausas. Filtra por partido, fase o temperatura.',
+  how2_h:'Encuesta',how2_p:'Cuéntanos qué sentiste viendo los partidos. ¿Cambió el juego después de las pausas? Tus respuestas se grafican en vivo debajo de las preguntas.',
+  home_banner:'<b>Lee esto primero.</b> La muestra es de <span class="nn"></span> partidos (fase de grupos más el inicio de los dieciseisavos), así que todo acá es preliminar y describe patrones, no causa comprobada. Como todos los partidos de 2026 tienen pausas, no hay grupo de control interno; por eso el punto de comparación son los Mundiales 2018 y 2022, que no tuvieron pausas obligatorias.',
+  home_foot:'Fuentes: FBref (eventos), SofaScore (xG y momentum), Open-Meteo (estimación de WBGT). Actualizado __UPDATED__.',
+  an_heat_h:'¿Cuánto calor hace ahí afuera?',
+  an_heat_s:'La sensación térmica real en la cancha, llamada WBGT: temperatura del aire, humedad y sol en un solo número. De 28°C para arriba es duro para los jugadores.',
+  heatLeg:()=>['Fresco','Templado','Calor '+tU(28,0)+'+'],
+  heatNote:(avgT,thrT,hotN,coolN,n)=>`En estos ${n} partidos la cancha se siente en promedio como <b>${avgT}</b>. Contamos un partido como <b>caluroso</b> cuando la sensación térmica es de <b>${thrT} o más</b> (${hotN} partidos hasta ahora), y <b>fresco</b> por debajo (${coolN} partidos). Ese es el corte que usa el filtro Calor / Fresco de arriba. La sensación térmica real (su nombre técnico es WBGT) importa más que la temperatura del aire sola, porque la humedad y el sol directo hacen que la misma temperatura pese mucho más en el cuerpo.`,
+  lbl_match:'Partido',opt_all:'Todos los partidos (totales)',lbl_stage:'Fase',st_all:'Todas',st_group:'Grupos',st_ko:'Eliminatorias',
+  lbl_heat:'Calor',h_all:'Todos',h_hot:'Calor 🔥',h_cool:'Fresco',
+  an_breaks_h:'Qué cambia alrededor de cada pausa',an_breaks_s:'Solo los 10 minutos justo antes de cada pausa frente a los 10 minutos justo después. Los goles, tarjetas o cambios en cualquier otro momento del partido no se cuentan aquí, así que estos números no van a cuadrar con el marcador final. Para ver todos los goles, mira el gráfico de tiempos de gol más abajo.',
+  recon1:(tot,inw,mins)=>`Este partido tuvo <b>${tot}</b> gol${tot===1?'':'es'}${mins.length?' (al '+mins.map(m=>m+"'").join(', ')+')':''}. Esta tabla solo mira los 10 minutos a cada lado de las pausas del 22' y el 67', así que solo <b>${inw}</b> ${inw===1?'cae':'caen'} dentro de una ventana aquí. El resto se marcaron en otros momentos. El gráfico de tiempos de gol de abajo los muestra todos.`,
+  reconAll:(tot,inw,n)=>`Ojo: esta tabla cuenta solo los 10 minutos a cada lado de cada pausa. En estos ${n} partidos, <b>${inw}</b> de <b>${tot}</b> goles cayeron dentro de una ventana de pausa; los otros ${tot-inw} pasaron en otro momento del partido, por eso estos totales se ven bajos. El gráfico de tiempos de gol de abajo los tiene todos.`,
+  an_poss_h:'Quién tuvo más la pelota',an_poss_s:'Los partidos del Mundial son en cancha neutral, así que no hay un local de verdad. Elige un partido arriba y verás cómo se repartieron la pelota los dos equipos en todo el juego.',
+  possPrompt:'⚽ Elige un partido arriba para ver quién tuvo más la pelota.<br><span style="font-weight:400;opacity:.85">Los partidos del Mundial son en cancha neutral, así que no hay un local para promediar entre todos.</span>',
+  possNoData:(h,a)=>`⚽ Aún no hay datos de posesión para ${h} v ${a}.<br><span style="font-weight:400;opacity:.85">Tenemos el resultado y los eventos de este partido, pero el reparto de posesión no llegó. Prueba con otro partido.</span>`,
+  wideNote:(n)=>`<div class="scopebanner">📊 Vista de todo el torneo. Esta medida no está disponible partido por partido, así que usa la muestra completa y no cambia cuando eliges un solo juego.</div>`,
+  an_dist_h:'Cuándo se marcan los goles',an_dist_s:'Cada gol, agrupado en bloques de 5 minutos. Las líneas punteadas son las pausas. Si las pausas frenan el juego, verías menos goles justo después.',
+  an_hist_h:'2026 vs los dos Mundiales anteriores (sin pausas)',an_hist_s:'Cuándo se marcaron los goles. Rojo es 2026; gris es el promedio de los dos Mundiales sin pausas. Si el rojo cae en las pausas y el gris no, las pausas están haciendo algo.',
+  histLeg1:'Años sin pausas (2018 y 2022)',histLeg2:'2026 (con pausas)',
+  an_xg_h:'¿Menos goles tras la pausa: mala suerte o partido más tranquilo?',an_xg_s:'Los goles pueden bajar por dos razones: los equipos fallan buenas ocasiones (mala suerte), o simplemente generan menos ocasiones buenas (partido más tranquilo). Para distinguirlo miramos la calidad de las ocasiones, llamada goles esperados o xG, que puntúa qué tan probable era cada remate. Cada barra son los 10 minutos después de una pausa como porcentaje de los 10 minutos antes. 100% es sin cambio; menos es menos tras la pausa.',
+  an_mom_h:'¿Cambia el equipo que domina tras una pausa?',an_mom_s:'El momentum es qué equipo está atacando más. Cuando cambia tras una pausa, ¿ese equipo termina marcando?',
+  an_subs_h:'¿Los técnicos usan las pausas para hacer cambios?',an_subs_s:'Cuándo se hacen los cambios, por bloque de 5 minutos. Las líneas punteadas son las pausas. Si los técnicos las usaran para cambiar, verías un pico justo ahí.',
+  subLeg26:'2026 (con pausas)',subLeg22:'2022 (sin pausas)',
+  subNote:(s)=>`No. La pausa temprana del 22' casi no tiene cambios (${s.b1} en todo el torneo), y la segunda solo tiene cambios porque cae en la ventana normal del minuto 60 al 75. La línea dorada de 2022, sin pausas, queda casi encima de 2026: mismo vacío en el 22', mismos picos del entretiempo y del final. Las pausas no cambiaron cuándo se hacen los cambios. 2026: ${s.n} partidos; 2022: 48.`,
+  an_wel_h:'¿Las pausas protegen a los jugadores en el calor?',an_wel_s:'Pausas por lesión y cambios por lesión por partido, contados desde el relato en vivo. ¿Los partidos con calor son más duros para los jugadores?',
+  welLeg:()=>['Partidos con calor (sensación '+tU(28,0)+'+)','Partidos más frescos'],welAxis:['Todo el partido','Últimos 20 min'],
+  welK:['Pausas por lesión por partido','Parte en los últimos 20 min','Calor vs fresco, por partido'],
+  welNote:(w)=>`Contado desde el relato en vivo (pausas de atención y cambios por lesión), como lo hacen los estudios publicados de lesiones del Mundial. Las atenciones suben al final, cuando las piernas se cansan. La sorpresa: <b>los partidos con calor no son más duros</b>, tienen menos pausas, no más (${w.hot.ev} vs ${w.cool.ev} por partido). Eso encaja con que las pausas hacen su trabajo en el calor, aunque partidos más lentos y tranquilos también podrían explicarlo. Frente a 2022 (sin pausas), la parte de lesiones al final es casi igual (34% entonces vs ${w.latePct}% ahora), así que las pausas no cambiaron cuándo ocurren las lesiones. Contado por relato, no datos médicos oficiales; comparamos partes, no conteos, porque el detalle del relato cambia según el año.`,
+  v_tests_h:'Tres formas de comprobarlo',v_tests_s:'Cada una hace la misma pregunta de otra forma: ¿de verdad el juego baja justo después de un pausa? Verde significa que parece real, ámbar que quizás, gris que podría ser casualidad.',
+  v_trend_h:'Cómo ha cambiado el panorama',v_next_h:'Qué cambiaría la respuesta',
+  gl_title:'Glosario en palabras sencillas',gl_sub:'Cada término del tablero, explicado. No hace falta saber de estadística.',
+  sv_title:'¿Las pausas cambiaron cómo se sintió el partido?',sv_sub:'Vota una vez y mira cómo respondió todo el mundo, en vivo. Los resultados se comparten entre todos y se actualizan a medida que la gente vota.',
+  sv_submit:'Enviar respuesta',sv_export:'Exportar CSV',
+  sv_note:'Las respuestas se juntan de forma anónima entre todos los que visitan, y el gráfico se actualiza en vivo. Solo conteos, no se guardan nombres ni comentarios. Un voto por navegador.',
+  nav_bracket:'Llaves',nav_updates:'Novedades',
+  br_title:'Llave de eliminatorias',br_sub:'El camino a la final. Los resultados se llenan a medida que se juegan las rondas.',
+  up_title:'Registro de cambios',up_sub:'Qué ha cambiado en este estudio y tablero, lo más nuevo primero.',
+  share:'Copiar el veredicto',shareDone:'Copiado. Pégalo donde quieras.',
+  subUpdated:(d,n)=>`Actualizado ${d} · ${n} partidos`,brComing:'Por jugarse',pens:'definido por penales',
+  rounds:{R32:'Dieciseisavos',R16:'Octavos',QF:'Cuartos',SF:'Semifinales',F:'Final'},
+  shareText:(ans,pre,post,n)=>`Cooling Economy · Copa del Mundo 2026\n¿Las pausas de hidratación cambian el partido? ${ans}\nGoles en los 10 min antes vs después de las pausas: ${pre} vs ${post}, en ${n} partidos.`,
+  updates:[
+   ['2026-07-01','Más octavos','Se agregó México 2-0 Ecuador, otro con calor, así que ya están los tres partidos de octavos del 30 de junio. Ya son 79 partidos, y la encuesta tiene un gráfico de resultados en vivo más claro.'],
+   ['2026-06-30','Partidos de hoy','Se agregaron los octavos del 30 de junio (Côte d\'Ivoire 1-2 Noruega, Francia 3-0 Suecia), ambos con sensación térmica sobre 29°C. Ya son 78 partidos en la base.'],
+   ['2026-06-30','Nuevos gráficos y textos más claros','Se agregó un tira y afloja de momentum y una línea de goles sobre la cancha por partido, un botón °C/°F, y una reescritura en lenguaje simple del panel de calidad de ocasiones (xG). Las tablas de pausas ahora muestran cómo cuadran con el marcador.'],
+   ['2026-06-30','Bases sin pausas','Se agregó 2022 (sin pausas) a los paneles de cambios y bienestar. El momento de los cambios es idéntico año a año, y la parte de lesiones al final casi no cambia.'],
+   ['2026-06-30','Bienestar del jugador','Nuevo panel de lesiones y atenciones según el calor, contado desde el relato en vivo. Los partidos con calor no son más duros, incluso tienen menos pausas.'],
+   ['2026-06-30','Momento de los cambios','Nuevo panel: ¿los técnicos usan las pausas para hacer cambios? No: la pausa temprana del 22′ casi no tiene cambios, y la tardía solo coincide con el subbing normal.'],
+   ['2026-06-30','Eliminatorias y penales','Se agregaron los primeros dieciseisavos, una llave y los ganadores por penales. La caída tras la pausa se suavizó aún más al crecer la muestra.'],
+   ['2026-06-29','Lenguaje sencillo','Se cambió la jerga estadística por veredictos en palabras (Parece real, Podría ser algo, Probablemente casualidad) y se añadió un glosario.'],
+   ['2026-06-28','Momentum','Se incorporó el momentum minuto a minuto para probar si un cambio de control tras la pausa lleva a goles. No lo hace.'],
+   ['2026-06-27','Bases y xG','Se comparó 2026 con los Mundiales sin pausas de 2018 y 2022 y se confirmó que la calidad de ocasiones (xG) baja junto con los goles.'],
+   ['2026-06-27','Lanzamiento','Primera versión: ventanas de goles, tarjetas y cambios alrededor de cada pausa en la fase de grupos, con filtro de calor.'],
+  ],
+  kMatches:'🏟️ Partidos',kGoals:'⚽ Goles',kGpm:'🎯 Goles / partido',kWbgt:'🔥 Calor típico',
+  meterLeft:'Podría ser azar',meterRight:'Parece real',moreShow:'Ver el análisis a fondo  ▾',moreHide:'Ocultar el análisis a fondo  ▴',
+  metrics:['⚽ Goles','🟨 Tarjetas','🔁 Cambios','🔀 Cambios de ventaja','↩️ Goles de remontada'],
+  before:'Antes',after:'Después',beforeAfter:'10 min antes → después',
+  hvLabel:'El veredicto hasta ahora',
+  hvBig:'Un leve enfriamiento tras el pitazo, pero nada que los números respalden todavía.',
+  hvBody:(pre,post)=>`El juego baja un poquito justo después de cada pausa: ${pre} goles en los diez minutos antes contra ${post} después, y la calidad de ocasiones va en la misma dirección. Pero es del tipo de diferencia que sale por casualidad al lado de los Mundiales sin pausas, y se ha ido desvaneciendo a medida que llegan más partidos. Respuesta directa: no, al menos no de una forma que hoy podamos sostener. Una pista para seguir mirando, no un efecto comprobado.`,
+  hvFinding:(n)=>`<b>Por qué "hay que seguir mirándolo" y no "caso cerrado".</b> Con 66 partidos de grupos la caída tras la pausa se veía más marcada, y la versión con calor llegó a rozar el umbral usual. Con ${n} partidos ya se ha aplanado de vuelta hacia el patrón sin pausas, que es justo como se comporta un golpe de suerte con muestra pequeña. Así que la evidencia de un efecto real es más débil ahora, no más fuerte. Las eliminatorias lo deciden.`,
+  scope1:'1 partido',
+  distNoteSingle:'Un solo partido: solo los goles de este juego.',
+  distNoteAll:'Normalmente los goles aumentan al final de cada tiempo. Así que si las pausas no hicieran nada, las líneas punteadas no deberían coincidir con una caída.',
+  histBase:(post,tot,pct)=>`<b>Base sin pausas:</b> ${post} de ${tot} goles de la ventana de la pausa caen <i>después</i> de la marca (${pct}%). Ahí el marcador sube, el ritmo normal. `,
+  histFew:(n)=>`Esta selección tiene muy pocos goles en la ventana de la pausa (${n}) para comparar.`,
+  histSel:(post,n,pct,below,verdict)=>`<b>Esta selección:</b> ${post} de ${n} caen después (${pct}%). `+(below?`2026 cae por debajo de los años sin pausas acá. <b>${verdict}.</b>`:`Acá no cae de verdad por debajo de los años sin pausas.`),
+  xgNote:(n)=>`Después de una pausa, los goles, la calidad de las ocasiones (xG) y los remates bajan a unos dos tercios de lo que eran justo antes. La clave: <b>la calidad de las ocasiones baja tanto como los goles</b>. Si fuera solo mala suerte de cara al arco, las buenas ocasiones seguirían ahí y solo bajarían los goles. En cambio, los equipos de verdad crean menos justo tras el pitazo. De ${n} partidos de grupos.`,
+  momK:['Cuánto se mueve el momentum','Cuántas veces cambia el dominante','Goles justo tras las pausas'],
+  momNote:(M)=>`El equipo que domina sí cambia bastante: en 1 de cada 4 pausas (<b>${M.flip}%</b>), el otro toma el control. Pero tomar el control no significa marcar. Los goles tras la pausa son de quien domina <b>en ese momento</b> (${M.ontop[0]} de ${M.postgoals}), no del que acaba de agarrar el momentum (${M.gainer[0]}). Con solo ${M.postgoals} goles tras la pausa hasta ahora, tómalo con pinzas. De 54 partidos de grupos.`,
+  tugB1:'Alrededor de la pausa del 22\' (antes → después)',tugB2:'Alrededor de la pausa del 67\' (antes → después)',
+  tugKey:'○ antes de la pausa     ⚽ después de la pausa',
+  tugNote:(g)=>{const m=g.mom,side=v=>v>3?g.home:(v<-3?g.away:'ninguno'),fl=(a,b)=>((a>3&&b<-3)||(a<-3&&b>3)),flipped=fl(m[0],m[1])||fl(m[2],m[3]);
+   return `La pelota muestra quién empujaba más. Tras la pausa del 22', <b>${side(m[1])}</b> tenía el control; tras la del 67', <b>${side(m[3])}</b>. ${flipped?'El momentum cambió de lado tras una pausa en este partido.':'El mismo lado siguió empujando en las dos pausas.'} Más a la derecha (dorado) es ${g.home} dominando; más a la izquierda (azul) es ${g.away}.`;},
+  momLabels:['Equipo arriba DESPUÉS de la pausa','Equipo que GANÓ momentum'],momTitle:(t)=>`goles tras la pausa (de ${t})`,
+  readSingle:(g,m)=>`<b>${flag(g.home)} ${g.home} ${g.hg}–${g.ag} ${g.away} ${flag(g.away)}</b> · ${g.date} · ${tU(g.wbgt,1)} de calor.${m} Un partido es anécdota, así que cambia a Todos los partidos para ver el patrón.`,
+  readAll:(pre,post)=>`<b>¿La pausa cambia el partido, o esto es normal?</b> Los goles van ${pre}→${post} alrededor de las pausas acá. Los goles aumentan naturalmente al final del tiempo, así que la comparación de más abajo es la prueba real. El efecto se ve más claro en los <b>partidos con calor</b>, prueba el filtro de Calor.`,
+  momTxt:(m,t)=>` Momentum (+ significa ${t} empujando). P1 ${fmt(m[0])}→${fmt(m[1])}, P2 ${fmt(m[2])}→${fmt(m[3])}.`,
+  distX:'minuto del partido',distY:'goles',histX:'minuto del partido',histY:'% de goles',xgX:'después ÷ antes',
+  vEyebrow:(n)=>`Estado actual · al ${U} · ${n} partidos`,
+  vYes:'Probablemente sí: un enfriamiento medible tras el pitazo.',vNo:'Todavía no. Cualquier efecto es leve y sin comprobar.',
+  vLead:(pre,post,n)=>`En ${n} partidos, los goles en los diez minutos después de un pausa (${post}) quedan por debajo de los diez minutos antes (${pre}). La inclinación está ahí en el papel, pero ninguna de las tres comprobaciones de abajo es lo bastante fuerte para confiar todavía, así que hoy lo honesto es hablar de una tendencia leve, no de un efecto firme.`,
+  vt1:'Dentro de los partidos 2026',vt2:()=>'Solo partidos con calor (sensación '+tU(28,0)+'+)',vt3:'Frente a 2018 y 2022 sin pausas',
+  vt1n:(a,b)=>`${a} goles antes contra ${b} después de las pausas`,vt2n:(a,b,n)=>`${a} antes contra ${b} después, ${n} partidos`,vt3n:(pct)=>`${pct}% de los goles de la ventana caen después, contra 55% sin pausas`,
+  cReal:'Parece real',cMaybe:'Podría ser algo',cChance:'Probablemente casualidad',vstatNa:'Aún no hay suficientes partidos',
+  vTrend:'Con 66 partidos de grupos la caída se veía más marcada y la versión con calor llegó a rozar el umbral. Sumar el cierre del 27 de junio y los primeros juegos de eliminatoria la empujaron de vuelta hacia el patrón sin pausas. Un efecto que se encoge cuando se suman partidos se comporta como ruido, así que la confianza bajó, no subió.',
+  vNext:'Un resultado limpio necesitaría que la caída aguante mientras las eliminatorias suman partidos, que la brecha con calor se vuelva a abrir y que el xG siga cayendo al mismo paso que los goles. La actualización diaria refresca estos números después de cada jornada.',
+  gloss:[
+   ['Parece real / Podría ser algo / Probablemente casualidad','Nuestros veredictos en palabras sobre si una diferencia es confiable. "Parece real" significa que una diferencia así casi nunca pasaría por azar. "Podría ser algo" significa que hay una pista, pero todavía podría ser suerte. "Probablemente casualidad" significa que diferencias de ese tamaño salen al azar todo el tiempo. Reemplazan al puntaje técnico para que no necesites las matemáticas.'],
+   ['Sensación térmica real','Qué tan caluroso se siente de verdad en la cancha, no solo el número del termómetro. Junta temperatura del aire, humedad y sol directo en una sola cifra, porque 30°C con humedad y sol pesan mucho más que 30°C secos y con brisa. Su nombre técnico es WBGT (temperatura de globo de bulbo húmedo), y es lo que la FIFA vigila para decidir medidas por calor. De 28°C para arriba cuenta como caluroso aquí. El filtro de Calor lo usa para separar partidos calurosos de los más frescos.'],
+   ['Cancha neutral (sin local)','Casi todos los partidos del Mundial se juegan en estadios neutrales, así que no hay ventaja de local de verdad. El fixture igual nombra a un equipo primero, pero eso no lo hace local. Las únicas excepciones son los anfitriones (EE. UU., Canadá, México) cuando juegan en su país.'],
+   ['Pausa por lesión','Cuando el juego se detiene para atender a un jugador, o se hace un cambio por lesión. Las contamos desde el relato en vivo, el mismo método de los estudios publicados de lesiones del Mundial. Es un conteo por relato, no datos médicos oficiales.'],
+   ['xG (goles esperados)','Un puntaje de 0 a 1 de qué tan probable era que cada remate fuera gol, según su posición y tipo. Al sumarlos se ve cuántos goles "debería" haber metido un equipo, separando la calidad de la ocasión de la suerte al definir.'],
+   ['Pausa de hidratación','Una pausa obligatoria de tres minutos cerca del minuto 22 y del 67 de cada partido de 2026, para que los jugadores tomen agua y se refresquen.'],
+   ['Ventana antes / después','Los diez minutos justo antes de un pausa contra los diez justo después. Comparamos ambos para ver qué cambia la pausa.'],
+   ['Momentum','La lectura minuto a minuto de SofaScore sobre qué equipo presiona y genera peligro. Positivo significa que el equipo local va arriba. Es un sustituto de posesión y territorio, no el porcentaje exacto de posesión.'],
+   ['Cambio de momentum','Cuánto se mueve ese número de momentum de antes de la pausa a después. Un cambio mayor significa que el control del juego se movió más.'],
+   ['Cambio de ventaja','Un gol que voltea quién va ganando: un empate o un gol que pone adelante.'],
+   ['Gol de remontada','Un gol del equipo que en ese momento iba perdiendo.'],
+   ['Grupos vs Eliminatorias','La fase de grupos es la ronda inicial todos contra todos. Las eliminatorias son la fase de eliminación directa que sigue, normalmente más cerrada y con menos goles. El botón de Fase cambia entre ellas.'],
+   ['Base sin pausas','Los Mundiales 2018 y 2022, que no tuvieron pausas obligatorias. Muestran el patrón normal, así que sirven para saber si 2026 es distinto.'],
+  ],
+  sq:[
+   {id:'watched',q:'¿Has visto partidos del Mundial 2026?',o:['Sí, varios','Algunos','No']},
+   {id:'b1feel',q:'Después de la Pausa 1 (cerca del minuto 22), ¿se sintió distinto el partido?',o:['Más intenso','Menos intenso','Sin cambio','No me fijé']},
+   {id:'b2feel',q:'Después de la Pausa 2 (cerca del minuto 67), ¿se sintió distinto el partido?',o:['Más intenso','Menos intenso','Sin cambio','No me fijé']},
+   {id:'whobenefits',q:'¿A quién ayudan más las pausas?',o:['Al equipo que va ganando','Al que va perdiendo','A ninguno']},
+   {id:'purpose',q:'¿Para qué son las pausas principalmente?',o:['Bienestar del jugador','Plata de la publicidad','Ambos','No estoy seguro']},
+   {id:'fair',q:'¿Te parece justo para la competencia que sean obligatorias?',o:['Sí','No','No estoy seguro']}
+  ],
+  svComment:'¿Algo más que notaste?',svPlaceholder:'Opcional',svAfter1:'Tras la Pausa 1',svAfter2:'Tras la Pausa 2',
+  svTally:(n)=>`${n} respuesta${n===1?'':'s'} hasta ahora`,svNone:'Aún no hay respuestas.',svThanks:'¡Gracias! Tu voto quedó ✓',svErr:'No se pudo enviar, reintenta',
+  svFeel:['Más intenso','Menos intenso','Sin cambio','No me fijé'],
+ }
+};
+const L=()=>TR[state.lang];
+function fmt(x){return (x>0?'+':'')+x;}
+
+// ---------- helpers ----------
+const nm=t=>{const m=t.match(/(\d+)(?:\+(\d+))?/);return m?(+m[1])+(m[2]?+m[2]:0):null;};
+const parseGoals=s=>s?s.split(',').map(nm).filter(x=>x!=null):[];
+const parseGoalsT=s=>s?s.split(',').map(t=>{const m=t.match(/(\d+)(?:\+(\d+))?\s*([ha])/i);return m?{m:(+m[1])+(m[2]?+m[2]:0),team:m[3].toLowerCase()}:null;}).filter(x=>x):[];
+function selGames(){
+ if(state.sel!=='all')return G.filter(g=>g.id===state.sel);
+ let gs=G;
+ if(state.stage==='group')gs=gs.filter(g=>g.stage==='group');
+ else if(state.stage==='ko')gs=gs.filter(g=>g.stage!=='group');
+ if(state.heat==='hot')gs=gs.filter(g=>g.wbgt>=28);
+ else if(state.heat==='cool')gs=gs.filter(g=>g.wbgt<28);
+ return gs;}
+function binom(k,n){if(n===0)return NaN;const lc=n=>{let s=0;for(let i=2;i<=n;i++)s+=Math.log(i);return s;};
+ const pmf=i=>Math.exp(lc(n)-lc(i)-lc(n-i)+n*Math.log(.5));const p0=pmf(k);let s=0;for(let i=0;i<=n;i++)if(pmf(i)<=p0+1e-12)s+=pmf(i);return s;}
+function aggBreak(gs,w){const o={g:[0,0],c:[0,0],s:[0,0],lc:[0,0],cm:[0,0]};gs.forEach(g=>{const b=g[w];for(const k in o){o[k][0]+=b[k][0];o[k][1]+=b[k][1];}});return o;}
+const erf=x=>{const t=1/(1+.3275911*Math.abs(x));const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-x*x);return x>=0?y:-y;};
+function baselineP(post,n){if(n<6)return NaN;const bPre=D.base['2018'].w[0]+D.base['2018'].w[2]+D.base['2022'].w[0]+D.base['2022'].w[2];const bPost=D.base['2018'].w[1]+D.base['2018'].w[3]+D.base['2022'].w[1]+D.base['2022'].w[3];const p1=bPost/(bPre+bPost),p2=post/n,pp=(bPost+post)/(bPre+bPost+n),se=Math.sqrt(pp*(1-pp)*(1/(bPre+bPost)+1/n));return 2*(1-0.5*(1+erf(Math.abs((p2-p1)/se)/Math.SQRT2)));}
+const baseTot=()=>{const b=D.base;return{pre:b['2018'].w[0]+b['2018'].w[2]+b['2022'].w[0]+b['2022'].w[2],post:b['2018'].w[1]+b['2018'].w[3]+b['2022'].w[1]+b['2022'].w[3]};};
+function conf(p){const T=L();if(isNaN(p))return{t:T.vstatNa,lvl:'lo'};if(p<0.05)return{t:T.cReal,lvl:'hi'};if(p<0.15)return{t:T.cMaybe,lvl:'mid'};return{t:T.cChance,lvl:'lo'};}
+const pillC={hi:'s',mid:'mid',lo:'ns'},vstatC={hi:'ok',mid:'mid',lo:'no'};
+const FLAG={"Mexico":"🇲🇽","South Africa":"🇿🇦","Korea Republic":"🇰🇷","Czechia":"🇨🇿","Canada":"🇨🇦","Bosnia & Herz.":"🇧🇦","United States":"🇺🇸","Paraguay":"🇵🇾","Qatar":"🇶🇦","Switzerland":"🇨🇭","Brazil":"🇧🇷","Morocco":"🇲🇦","Haiti":"🇭🇹","Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿","Australia":"🇦🇺","Türkiye":"🇹🇷","Germany":"🇩🇪","Curaçao":"🇨🇼","Netherlands":"🇳🇱","Japan":"🇯🇵","Côte d'Ivoire":"🇨🇮","Ecuador":"🇪🇨","Sweden":"🇸🇪","Tunisia":"🇹🇳","Belgium":"🇧🇪","Egypt":"🇪🇬","Spain":"🇪🇸","Cabo Verde":"🇨🇻","IR Iran":"🇮🇷","New Zealand":"🇳🇿","Saudi Arabia":"🇸🇦","Uruguay":"🇺🇾","France":"🇫🇷","Senegal":"🇸🇳","Iraq":"🇮🇶","Norway":"🇳🇴","Argentina":"🇦🇷","Algeria":"🇩🇿","Austria":"🇦🇹","Jordan":"🇯🇴","Portugal":"🇵🇹","Congo DR":"🇨🇩","England":"🏴󠁧󠁢󠁥󠁮󠁧󠁿","Croatia":"🇭🇷","Ghana":"🇬🇭","Panama":"🇵🇦","Uzbekistan":"🇺🇿","Colombia":"🇨🇴"};
+const flag=n=>FLAG[n]||'⚽';
+const obs=('IntersectionObserver'in window)?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');obs.unobserve(e.target);}}),{threshold:.08,rootMargin:'0px 0px -6% 0px'}):null;
+function armReveal(){document.querySelectorAll('.card,.hero').forEach(el=>{if(el.classList.contains('reveal'))return;el.classList.add('reveal');if(obs)obs.observe(el);else el.classList.add('in');});}
+function countUp(el){const t=(el.textContent||'').trim();const m=t.match(/^([^\d-]*)(-?[\d]+(?:\.[\d]+)?)(.*)$/);if(!m)return;const pre=m[1],end=parseFloat(m[2]),suf=m[3],dec=(m[2].split('.')[1]||'').length;const dur=850,t0=performance.now();
+ (function step(now){let p=Math.min(1,(now-t0)/dur);p=1-Math.pow(1-p,3);el.textContent=pre+(end*p).toFixed(dec)+suf;if(p<1)requestAnimationFrame(step);})(performance.now());}
+function countScope(id){const s=$(id);if(s)s.querySelectorAll('.v').forEach(countUp);}
+function renderBracket(){const T=L();const order=['R32','R16','QF','SF','F'];const byR={};order.forEach(r=>byR[r]=[]);
+ G.forEach(g=>{if(byR[g.stage])byR[g.stage].push(g);});
+ $('bracketWrap').innerHTML=order.map(r=>{const ms=byR[r];
+  const cards=ms.length?ms.map(g=>{let hw=g.hg>g.ag,aw=g.ag>g.hg;let hs=''+g.hg,as=''+g.ag;
+    if(g.pen){hw=g.pen[0]>g.pen[1];aw=g.pen[1]>g.pen[0];const ps=v=>` <span style="color:var(--muted);font-weight:600">(${v})</span>`;hs=g.hg+ps(g.pen[0]);as=g.ag+ps(g.pen[1]);}
+    return `<div class="bmatch"><div class="r ${hw?'w':(aw?'l':'')}"><span>${flag(g.home)} ${g.home}</span><span>${hs}</span></div><div class="r ${aw?'w':(hw?'l':'')}"><span>${flag(g.away)} ${g.away}</span><span>${as}</span></div>${g.pen?`<div style="font-size:10px;color:var(--muted);text-align:right;margin-top:3px;letter-spacing:.04em">${T.pens}</div>`:''}</div>`;}).join('')
+   :`<div class="bempty">${T.brComing}</div>`;
+  return `<div class="bround"><h4>${T.rounds[r]}</h4>${cards}</div>`;}).join('');}
+function renderUpdates(){$('updatesList').innerHTML=L().updates.map(u=>`<div class="up"><div class="ud">${u[0]}</div><div class="ut">${u[1]}</div><div class="up2">${u[2]}</div></div>`).join('');}
+
+// ---------- static text + tabs ----------
+function applyStatic(){
+ document.querySelectorAll('[data-i18n]').forEach(el=>{el.innerHTML=L()[el.dataset.i18n];});
+ document.querySelectorAll('.nn').forEach(e=>e.textContent=D.n);
+ $('langBtn').textContent = state.lang==='en'?'ES':'EN';
+ $('themeBtn').textContent = state.theme==='dark'?'☀':'☾';
+ $('unitBtn').textContent = state.unit==='c'?'°F':'°C';
+ $('moreBtn').textContent = state.more?L().moreHide:L().moreShow;
+ $('moreWrap').style.display = state.more?'':'none';
+ $('shareBtn').textContent = L().share;
+ $('subUpdated').textContent = L().subUpdated(U,D.n);
+ document.documentElement.lang=state.lang;
+}
+function showTab(t){state.tab=t;
+ document.querySelectorAll('.tab').forEach(p=>p.classList.remove('on'));$('tab-'+t).classList.add('on');
+ document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+ if(t==='analysis')renderAnalysis(); if(t==='verdict')renderVerdict();
+ if(t==='bracket')renderBracket(); if(t==='updates')renderUpdates();
+ setTimeout(()=>{armReveal();document.querySelectorAll('#tab-'+t+' .reveal').forEach(e=>e.classList.add('in'));},50);
+ window.scrollTo({top:0,behavior:'smooth'});}
+
+// ---------- graphics ----------
+function heroSVG(){const x=m=>30+(m/90)*640,w=(a,b)=>x(b)-x(a),es=state.lang==='es';
+ const b1=es?'Pausa 1':'Break 1',b2=es?'Pausa 2':'Break 2',cap=es?'Comparamos los 10 minutos a cada lado de cada pausa':'We compare the 10 minutes on each side of every break';
+ const mk=m=>`<rect x="${x(m)-2.5}" y="52" width="5" height="48" rx="2.5" fill="var(--gold)"/><text x="${x(m)}" y="55" text-anchor="middle" font-size="17">⚽</text>`;
+ return `<svg class="hero-svg" viewBox="0 0 700 122" role="img">
+  <rect x="${x(12)}" y="62" width="${w(12,22)}" height="26" rx="5" fill="rgba(100,116,139,.16)"/>
+  <rect x="${x(22)}" y="62" width="${w(22,32)}" height="26" rx="5" fill="rgba(192,57,43,.15)"/>
+  <rect x="${x(57)}" y="62" width="${w(57,67)}" height="26" rx="5" fill="rgba(100,116,139,.16)"/>
+  <rect x="${x(67)}" y="62" width="${w(67,77)}" height="26" rx="5" fill="rgba(192,57,43,.15)"/>
+  <rect x="30" y="70" width="640" height="10" rx="5" fill="var(--line)"/>
+  <line x1="${x(45)}" y1="60" x2="${x(45)}" y2="90" stroke="var(--muted)" stroke-width="1" stroke-dasharray="3 3"/>
+  ${mk(22)}${mk(67)}
+  <text x="${x(22)}" y="38" text-anchor="middle" font-size="13" font-weight="800" fill="var(--ink)" font-family="Archivo">${b1}</text>
+  <text x="${x(67)}" y="38" text-anchor="middle" font-size="13" font-weight="800" fill="var(--ink)" font-family="Archivo">${b2}</text>
+  <text x="${x(22)}" y="114" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="Archivo">~22'</text>
+  <text x="${x(67)}" y="114" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="Archivo">~67'</text>
+  <text x="30" y="114" font-size="11" fill="var(--muted)" font-family="Archivo">0'</text>
+  <text x="670" y="114" text-anchor="end" font-size="11" fill="var(--muted)" font-family="Archivo">90'</text>
+  <text x="${x(45)}" y="114" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="Archivo">HT</text>
+ </svg><div style="text-align:center;font-size:12.5px;color:var(--muted);margin-top:2px">${cap}</div>`;}
+function pitchSVG(hp,hName,aName){const W=720,H=300,P=12,fw=W-2*P,div=P+(hp/100)*fw,cx=W/2,cy=H/2;
+ const line=(a)=>`stroke="#ffffff" stroke-width="2" opacity="${a}" fill="none"`;
+ return `<svg viewBox="0 0 ${W} ${H}" role="img">
+  <defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f9d57"/><stop offset="1" stop-color="#16834a"/></linearGradient></defs>
+  <rect x="${P}" y="${P}" width="${fw}" height="${H-2*P}" rx="12" fill="url(#pg)"/>
+  ${[0,2,4,6,8,10].map(i=>`<rect x="${P+i*(fw/12)}" y="${P}" width="${fw/12}" height="${H-2*P}" fill="#ffffff" opacity="0.045"/>`).join('')}
+  <rect x="${P}" y="${P}" width="${div-P}" height="${H-2*P}" rx="12" fill="#e7b53c" opacity="0.20"/>
+  <rect x="${div}" y="${P}" width="${W-P-div}" height="${H-2*P}" fill="#0a1f44" opacity="0.20"/>
+  <rect x="${P}" y="${P}" width="${fw}" height="${H-2*P}" rx="12" ${line(.85)}/>
+  <line x1="${cx}" y1="${P}" x2="${cx}" y2="${H-P}" ${line(.8)}/>
+  <circle cx="${cx}" cy="${cy}" r="46" ${line(.8)}/><circle cx="${cx}" cy="${cy}" r="3" fill="#fff" opacity=".8"/>
+  <rect x="${P}" y="${cy-72}" width="78" height="144" ${line(.8)}/><rect x="${W-P-78}" y="${cy-72}" width="78" height="144" ${line(.8)}/>
+  <rect x="${P}" y="${cy-34}" width="32" height="68" ${line(.8)}/><rect x="${W-P-32}" y="${cy-34}" width="32" height="68" ${line(.8)}/>
+  <line x1="${div}" y1="${P}" x2="${div}" y2="${H-P}" stroke="#fff" stroke-width="3" stroke-dasharray="7 5"/>
+  <rect x="${P+16}" y="${P+16}" width="104" height="48" rx="10" fill="#e7b53c"/>
+  <text x="${P+16+52}" y="${P+16+34}" text-anchor="middle" font-size="27" font-weight="800" fill="#0a1f44" font-family="Saira Condensed">${Math.round(hp)}%</text>
+  <rect x="${W-P-16-104}" y="${P+16}" width="104" height="48" rx="10" fill="#15336b"/>
+  <text x="${W-P-16-52}" y="${P+16+34}" text-anchor="middle" font-size="27" font-weight="800" fill="#fff" font-family="Saira Condensed">${100-Math.round(hp)}%</text>
+  <text x="${P+18}" y="${H-P-16}" font-size="14" fill="#fff" opacity=".95" font-weight="600" font-family="Archivo">${hName}</text>
+  <text x="${W-P-18}" y="${H-P-16}" text-anchor="end" font-size="14" fill="#fff" opacity=".95" font-weight="600" font-family="Archivo">${aName}</text>
+ </svg>`;}
+function heatPitchSVG(avg,hotN,coolN){const W=720,H=300,P=12,fw=W-2*P,cx=W/2,cy=(P+(H-P-46))/2+ (P)/2;
+ const top=P,bot=H-P-46,ph=bot-top;
+ const xT=t=>P+((Math.max(15,Math.min(35,t))-15)/20)*fw;
+ const line=a=>`stroke="#ffffff" stroke-width="2" opacity="${a}" fill="none"`;
+ const mk=xT(avg),hot=xT(28),ccy=(top+bot)/2;
+ const ticks=[15,20,25,30,35].map(t=>`<line x1="${xT(t)}" y1="${bot}" x2="${xT(t)}" y2="${bot+7}" stroke="var(--muted)" stroke-width="1.5"/><text x="${xT(t)}" y="${bot+26}" text-anchor="middle" font-size="13" fill="var(--muted)" font-family="Archivo">${tU(t,0)}</text>`).join('');
+ return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="How hot the pitch feels">
+  <defs><linearGradient id="heatg" x1="0" y1="0" x2="1" y2="0">
+   <stop offset="0" stop-color="#2fb7d8"/><stop offset=".42" stop-color="#3fd18b"/><stop offset=".6" stop-color="#f6c945"/><stop offset=".78" stop-color="#ff8a3d"/><stop offset="1" stop-color="#ff2e5e"/></linearGradient></defs>
+  <rect x="${P}" y="${top}" width="${fw}" height="${ph}" rx="12" fill="url(#heatg)"/>
+  <rect x="${P}" y="${top}" width="${fw}" height="${ph}" rx="12" ${line(.8)}/>
+  <line x1="${cx}" y1="${top}" x2="${cx}" y2="${bot}" ${line(.6)}/>
+  <circle cx="${cx}" cy="${ccy}" r="42" ${line(.6)}/><circle cx="${cx}" cy="${ccy}" r="3" fill="#fff" opacity=".7"/>
+  <rect x="${P}" y="${ccy-64}" width="70" height="128" ${line(.6)}/><rect x="${W-P-70}" y="${ccy-64}" width="70" height="128" ${line(.6)}/>
+  <line x1="${hot}" y1="${top}" x2="${hot}" y2="${bot}" stroke="#fff" stroke-width="3" stroke-dasharray="7 5"/>
+  <text x="${hot+8}" y="${top+22}" font-size="14" font-weight="800" fill="#fff" font-family="Saira Condensed">HOT ZONE →</text>
+  <line x1="${mk}" y1="${top-2}" x2="${mk}" y2="${bot+2}" stroke="#0a1330" stroke-width="3"/>
+  <rect x="${Math.max(P,Math.min(W-P-126,mk-63))}" y="${top-1}" width="126" height="34" rx="8" fill="#0a1330"/>
+  <text x="${Math.max(P+63,Math.min(W-P-63,mk))}" y="${top+22}" text-anchor="middle" font-size="16" font-weight="800" fill="#fff" font-family="Saira Condensed">AVG ${tU(avg,1)}</text>
+  ${ticks}
+ </svg>`;}
+function tugSVG(g){const W=720,pad=16,cx=W/2,span=cx-108,H=205,GOLD='#f6c945',GOLDT='#c98a00',NAVY='#3b6fd4',T=L();const m=g.mom;
+ const cl=v=>Math.max(-50,Math.min(50,v)),X=v=>cx+(cl(v)/50)*span;
+ function row(y,pre,post,lab){const xb=X(pre),xa=X(post);const col=post>0.5?GOLD:(post<-0.5?NAVY:'#94a3b8');
+  return `<text x="${cx}" y="${y-22}" text-anchor="middle" font-size="12.5" font-weight="800" fill="var(--muted)" font-family="Archivo">${lab}</text>
+   <line x1="${pad+74}" y1="${y}" x2="${W-pad-74}" y2="${y}" stroke="var(--line)" stroke-width="6" stroke-linecap="round"/>
+   <line x1="${cx}" y1="${y-15}" x2="${cx}" y2="${y+15}" stroke="var(--muted)" stroke-width="2" stroke-dasharray="3 3"/>
+   <line x1="${xb}" y1="${y}" x2="${xa}" y2="${y}" stroke="${col}" stroke-width="6" stroke-linecap="round" opacity=".5"/>
+   <circle cx="${xb}" cy="${y}" r="7" fill="var(--card)" stroke="var(--muted)" stroke-width="2.5"/>
+   <circle cx="${xa}" cy="${y}" r="16" fill="${col}"/><text x="${xa}" y="${y+5}" text-anchor="middle" font-size="15">⚽</text>`;}
+ return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Momentum tug of war">
+  <text x="${pad}" y="24" font-size="15" font-weight="800" fill="${NAVY}" font-family="Saira Condensed">◀ ${g.away.toUpperCase()}</text>
+  <text x="${W-pad}" y="24" text-anchor="end" font-size="15" font-weight="800" fill="${GOLDT}" font-family="Saira Condensed">${g.home.toUpperCase()} ▶</text>
+  ${row(88,m[0],m[1],T.tugB1)}
+  ${row(160,m[2],m[3],T.tugB2)}
+  <text x="${cx}" y="${H-4}" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="Archivo">${T.tugKey}</text>
+ </svg>`;}
+function goalStripSVG(g){const W=720,pad=16,H=150,top=26,bot=104,fw=W-2*pad,cy=(top+bot)/2,GOLD='#f6c945',NAVY='#3b6fd4',T=L();
+ const X=mn=>pad+(Math.max(0,Math.min(95,mn))/95)*fw;const goals=parseGoalsT(g.gmin);
+ const brk=(mn,lab)=>`<line x1="${X(mn)}" y1="${top}" x2="${X(mn)}" y2="${bot}" stroke="#fff" stroke-width="2.5" stroke-dasharray="6 4" opacity=".9"/><text x="${X(mn)}" y="${top-8}" text-anchor="middle" font-size="12" font-weight="800" fill="var(--muted)" font-family="Archivo">${lab}</text>`;
+ const ticks=[0,15,30,45,60,75,90].map(t=>`<text x="${X(t)}" y="${bot+20}" text-anchor="middle" font-size="12" fill="var(--muted)" font-family="Archivo">${t}'</text>`).join('');
+ const balls=goals.map(o=>{const home=o.team==='h',x=X(o.m),y=home?top+20:bot-20,col=home?GOLD:NAVY;
+   return `<circle cx="${x}" cy="${y}" r="13" fill="${col}" stroke="var(--card)" stroke-width="2"/><text x="${x}" y="${y+4}" text-anchor="middle" font-size="11" font-weight="800" fill="${home?'#5a4600':'#fff'}" font-family="Archivo">${o.m}</text>`;}).join('');
+ return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="When the goals were scored">
+  <defs><linearGradient id="gsp" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f9d57"/><stop offset="1" stop-color="#16834a"/></linearGradient></defs>
+  <rect x="${pad}" y="${top}" width="${fw}" height="${bot-top}" rx="10" fill="url(#gsp)"/>
+  <line x1="${pad}" y1="${cy}" x2="${W-pad}" y2="${cy}" stroke="#fff" stroke-width="1.5" opacity=".35"/>
+  ${brk(22,"22'")}${brk(67,"67'")}
+  <text x="${pad+6}" y="${top+16}" font-size="11" fill="#fff" opacity=".85" font-family="Archivo">${g.home}</text>
+  <text x="${pad+6}" y="${bot-8}" font-size="11" fill="#fff" opacity=".85" font-family="Archivo">${g.away}</text>
+  ${balls}${ticks}
+ </svg>`;}
+function meterSVG(p){const pos=isNaN(p)?0:Math.max(0,Math.min(1,1-p/0.3));const cx=40+pos*620;const T=L();
+ const col=p<0.05?'#15924a':(p<0.15?'#e7b53c':'#94a3b8');
+ return `<svg class="hero-svg" viewBox="0 0 700 64" role="img"><defs><linearGradient id="mg" x1="0" x2="1"><stop offset="0" stop-color="#94a3b8"/><stop offset=".55" stop-color="#e7b53c"/><stop offset="1" stop-color="#15924a"/></linearGradient></defs>
+  <rect x="40" y="26" width="620" height="10" rx="5" fill="url(#mg)" opacity=".5"/>
+  <circle cx="${cx}" cy="31" r="11" fill="${col}" stroke="var(--card)" stroke-width="3"/>
+  <text x="40" y="56" font-size="12" fill="var(--muted)" font-family="Archivo">${T.meterLeft}</text>
+  <text x="660" y="56" text-anchor="end" font-size="12" fill="var(--muted)" font-family="Archivo">${T.meterRight}</text></svg>`;}
+
+// ---------- HOME ----------
+function renderHome(){
+ const T=L();$('heroArt').innerHTML=heroSVG();const goals=G.reduce((s,g)=>s+g.hg+g.ag,0);
+ const wb=G.filter(g=>g.wbgt!=null).map(g=>g.wbgt);
+ const k=[[T.kMatches,D.n],[T.kGoals,goals],[T.kGpm,(goals/D.n).toFixed(2)],[T.kWbgt,tU(wb.reduce((a,b)=>a+b,0)/wb.length,1)]];
+ $('homeKpis').innerHTML=k.map(([l,v])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+ const o1=aggBreak(G,'b1'),o2=aggBreak(G,'b2');const pre=o1.g[0]+o2.g[0],post=o1.g[1]+o2.g[1];
+ const pB=baselineP(post,pre+post);
+ $('homeVerdict').innerHTML=`<div class="vlabel">${T.hvLabel}</div><div class="vbig">${T.hvBig}</div><p>${T.hvBody(pre,post)}</p>`;
+ $('homeFinding').innerHTML=T.hvFinding(D.n);
+ countScope('homeKpis');
+}
+
+// ---------- ANALYSIS ----------
+const L19=['0','5','10','15','20','25','30','35','40','45','50','55','60','65','70','75','80','85','90+'];
+const breakLines={id:'bl',afterDraw(c){if(!['cDist','cHist','cSub'].includes(c.canvas.id))return;const xs=c.scales.x,ys=c.scales.y;if(!xs)return;
+ [[22/5,'B1'],[67/5,'B2']].forEach(([pos,lab])=>{const px=xs.left+(pos/18)*(xs.right-xs.left);const x=c.ctx;x.save();
+  x.strokeStyle=RED;x.setLineDash([5,4]);x.lineWidth=1.5;x.beginPath();x.moveTo(px,ys.top);x.lineTo(px,ys.bottom);x.stroke();
+  x.fillStyle=RED;x.font='800 10px Archivo';x.fillText(lab,px+3,ys.top+11);x.restore();});}};
+Chart.register(breakLines);
+function chartColor(){return state.theme==='dark'?'#aebbd6':'#64748b';}
+function PB(){return state.theme==='dark'?'#5ea0ff':'#0a1f44';}
+const dataLabels={id:'dl',afterDatasetsDraw(c){if(c.config.type!=='bar'||(c.data.labels||[]).length>6)return;const x=c.ctx;x.save();x.font='800 12px Archivo';x.fillStyle=state.theme==='dark'?'#e9eefb':'#101a30';
+ const horiz=c.options.indexAxis==='y';
+ c.data.datasets.forEach((ds,di)=>{c.getDatasetMeta(di).data.forEach((el,i)=>{const v=ds.data[i];if(v==null)return;
+   x.textAlign=horiz?'left':'center';x.textBaseline=horiz?'middle':'bottom';
+   x.fillText(c.canvas.id==='cXg'?v+'%':v, el.x+(horiz?7:0), el.y+(horiz?0:-5));});});x.restore();}};
+Chart.register(dataLabels);
+
+function makeAnalysis(){
+ const T=L();Chart.defaults.color=chartColor();Chart.defaults.borderColor=state.theme==='dark'?'rgba(148,163,184,.18)':'rgba(148,163,184,.22)';Chart.defaults.font={family:'Archivo, sans-serif',size:12};
+ distChart=new Chart($('cDist'),{type:'bar',data:{labels:L19,datasets:[{data:[],backgroundColor:PB(),borderRadius:4}]},
+  options:{plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:T.distX}},y:{beginAtZero:true,title:{display:true,text:T.distY}}}}});
+ histChart=new Chart($('cHist'),{type:'line',data:{labels:L19,datasets:[
+   {label:T.histLeg1,data:[],borderColor:GREY,backgroundColor:'rgba(148,163,184,.14)',fill:true,tension:.35,pointRadius:0,borderWidth:2.5},
+   {label:T.histLeg2,data:[],borderColor:RED,backgroundColor:'rgba(192,57,43,.12)',fill:true,tension:.35,pointRadius:0,borderWidth:3.5}]},
+  options:{plugins:{legend:{position:'bottom',labels:{boxWidth:18,font:{size:13}}}},scales:{x:{title:{display:true,text:T.histX}},y:{beginAtZero:true,title:{display:true,text:T.histY}}}}});
+ const X=D.xgwin,pc=v=>Math.round(v[1]/v[0]*100);
+ xgChart=new Chart($('cXg'),{type:'bar',data:{labels:[T.metrics[0],state.lang==='es'?'Ocasiones (xG)':'Chances (xG)',state.lang==='es'?'Remates':'Shots'],datasets:[{data:[pc(X.goals),pc(X.xg),pc(X.shots)],backgroundColor:[PB(),VIOLET,GREY],borderRadius:5}]},
+  options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,suggestedMax:120,ticks:{callback:v=>v+'%'},title:{display:true,text:T.xgX}}}}});
+ const M=D.momagg;
+ momChart=new Chart($('cMom'),{type:'bar',data:{labels:T.momLabels,datasets:[{data:[M.ontop[0],M.gainer[0]],backgroundColor:[PB(),GREY],borderRadius:5}]},
+  options:{indexAxis:'y',plugins:{legend:{display:false},title:{display:true,text:T.momTitle(M.postgoals),color:chartColor(),font:{size:11}}},scales:{x:{beginAtZero:true,suggestedMax:M.postgoals,ticks:{precision:0}}}}});
+ $('momKpis').innerHTML=[['±'+M.swing,T.momK[0]],[M.flip+'%',T.momK[1]],[M.postgoals,T.momK[2]]].map(([v,l])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+ $('xgNote').innerHTML=T.xgNote(X.n);
+ $('momNote').innerHTML=T.momNote(M);
+ const S=D.subagg,per=(b,n)=>b.map(v=>+(v/n).toFixed(2));
+ const sds=[{label:T.subLeg26,data:per(S.y2026.buckets,S.y2026.n),backgroundColor:PB(),borderRadius:4}];
+ if(S.y2022)sds.push({type:'line',label:T.subLeg22,data:per(S.y2022.buckets,S.y2022.n),borderColor:GOLD,backgroundColor:'transparent',tension:.35,pointRadius:0,borderWidth:3});
+ subChart=new Chart($('cSub'),{type:'bar',data:{labels:L19,datasets:sds},options:{plugins:{legend:{position:'bottom'}},scales:{x:{title:{display:true,text:T.distX}},y:{beginAtZero:true,title:{display:true,text:state.lang==='es'?'cambios por partido':'subs per match'}}}}});
+ $('subNote').innerHTML=T.subNote(S.y2026);
+ const W=D.welfare;
+ welChart=new Chart($('cWel'),{type:'bar',data:{labels:T.welAxis,datasets:[
+   {label:T.welLeg()[0],data:[W.hot.ev,W.hot.late],backgroundColor:RED,borderRadius:5},
+   {label:T.welLeg()[1],data:[W.cool.ev,W.cool.late],backgroundColor:GREY,borderRadius:5}]},
+  options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,title:{display:true,text:state.lang==='es'?'por partido':'per game'}}}}});
+ $('welKpis').innerHTML=[[W.perMatch,T.welK[0]],[W.latePct+'%',T.welK[1]],[W.hot.ev+' v '+W.cool.ev,T.welK[2]]].map(([v,l])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+ $('welNote').innerHTML=T.welNote(W);
+}
+function fillMatchSelect(){const T=L();const sel=$('selMatch');sel.innerHTML=`<option value="all">${T.opt_all}</option>`+G.map(g=>`<option value="${g.id}">${flag(g.home)} ${g.home} ${g.hg}-${g.ag} ${g.away} ${flag(g.away)} · ${g.date}</option>`).join('');sel.value=state.sel;}
+
+function renderAnalysis(){
+ const T=L();
+ if(!made.analysis){makeAnalysis();made.analysis=true;}
+ const gs=selGames(),single=state.sel!=='all';
+ $('scopeLbl').textContent=single?T.scope1:gs.length+' '+(state.lang==='es'?'partidos':'matches');
+ const wbg=gs.filter(g=>g.wbgt!=null).map(g=>g.wbgt);
+ if(wbg.length){const avg=(wbg.reduce((a,b)=>a+b,0)/wbg.length).toFixed(1);const hotN=wbg.filter(w=>w>=28).length,coolN=wbg.length-hotN;
+  $('heatPitch').innerHTML=heatPitchSVG(avg,hotN,coolN);
+  $('heatLegend').innerHTML=T.heatLeg().map((l,i)=>`<span class="hl"><span class="dot" style="background:${['#2fb7d8','#f6c945','#ff2e5e'][i]}"></span>${l}</span>`).join('');
+  $('heatNote').innerHTML=T.heatNote(tU(avg,1),tU(28,0),hotN,coolN,gs.length);}
+ const names=T.metrics,keys=['g','c','s','lc','cm'];
+ function bcard(w,label){const o=aggBreak(gs,w);
+  const rows=keys.map((k,i)=>{const b=o[k][0],a=o[k][1],d=a-b,cl=d<0?'dn':(d>0?'up':'fl'),sg=d>0?'+':'';
+    return `<tr><td>${names[i]}</td><td>${b}</td><td>${a}</td><td class="delta ${cl}">${sg}${d}</td></tr>`;}).join('');
+  const c=conf(binom(o.g[1],o.g[0]+o.g[1]));const pill=`<span class="pill ${pillC[c.lvl]}">${c.t}</span>`;
+  return `<div class="bcard"><div class="bhead">${label} ${pill}</div><div class="bsub">${T.beforeAfter}</div>
+   <table><thead><tr><th>${state.lang==='es'?'Métrica':'Metric'}</th><th>${T.before}</th><th>${T.after}</th><th>Δ</th></tr></thead><tbody>${rows}</tbody></table></div>`;}
+ $('breaks').innerHTML=bcard('b1',"Break 1 · ~22'")+bcard('b2',"Break 2 · ~67'");
+ if(single&&gs[0].possH!=null){const g0=gs[0],hp=g0.possH/(g0.possH+g0.possA)*100;
+  $('pitchWrap').innerHTML=pitchSVG(hp,flag(g0.home)+' '+g0.home,g0.away+' '+flag(g0.away));}
+ else if(single){const g0=gs[0];$('pitchWrap').innerHTML=`<div class="pitchprompt">${T.possNoData(g0.home,g0.away)}</div>`;}
+ else $('pitchWrap').innerHTML=`<div class="pitchprompt">${T.possPrompt}</div>`;
+ const buckets=new Array(19).fill(0);gs.forEach(g=>parseGoals(g.gmin).forEach(m=>{let bi=m>90?18:Math.floor((m-0.0001)/5);if(bi<0)bi=0;if(bi>18)bi=18;buckets[bi]++;}));
+ distChart.data.datasets[0].data=buckets;distChart.update();
+ $('distNote').textContent=single?T.distNoteSingle:T.distNoteAll;
+ if(single){$('goalStrip').style.display='';$('goalStrip').innerHTML=goalStripSVG(gs[0]);}else{$('goalStrip').style.display='none';}
+ const norm=(a,t)=>t?a.map(x=>+(x/t*100).toFixed(2)):a.map(_=>0);const tot=buckets.reduce((a,b)=>a+b,0);
+ const b18=norm(D.base['2018'].buckets,D.base['2018'].tot),b22=norm(D.base['2022'].buckets,D.base['2022'].tot);
+ histChart.data.datasets[0].data=b18.map((v,i)=>+((v+b22[i])/2).toFixed(2));
+ histChart.data.datasets[1].data=norm(buckets,tot);
+ histChart.data.datasets[1].label=single?'2026 · '+gs[0].home:T.histLeg2;
+ histChart.update();
+ const o1=aggBreak(gs,'b1'),o2=aggBreak(gs,'b2'),preS=o1.g[0]+o2.g[0],postS=o1.g[1]+o2.g[1],nS=preS+postS;
+ const totG=gs.reduce((s,g)=>s+g.hg+g.ag,0),winG=preS+postS;
+ $('breaksRecon').innerHTML=single?T.recon1(totG,winG,parseGoals(gs[0].gmin).sort((a,b)=>a-b)):T.reconAll(totG,winG,gs.length);
+ const bt=baseTot();
+ let v=T.histBase(bt.post,bt.pre+bt.post,Math.round(bt.post/(bt.pre+bt.post)*100));
+ if(nS<6)v+=T.histFew(nS);
+ else{const p2=postS/nS,p1=bt.post/(bt.pre+bt.post),pp=(bt.post+postS)/(bt.pre+bt.post+nS),se=Math.sqrt(pp*(1-pp)*(1/(bt.pre+bt.post)+1/nS)),z=(p2-p1)/se,p=2*(1-0.5*(1+erf(Math.abs(z)/Math.SQRT2)));
+  v+=T.histSel(postS,nS,Math.round(p2*100),p2<p1,conf(p).t);}
+ $('histVerdict').innerHTML=v;
+ let momTxt='';if(single&&gs[0].mom)momTxt=T.momTxt(gs[0].mom,gs[0].home);
+ $('readbox').innerHTML=single?T.readSingle(gs[0],momTxt):T.readAll(preS,postS);
+ if(single&&gs[0].mom){$('momChartBox').style.display='none';$('momKpis').style.display='none';$('momTug').style.display='';
+   $('momTug').innerHTML=tugSVG(gs[0]);$('momNote').innerHTML=T.tugNote(gs[0]);}
+ else{$('momChartBox').style.display='';$('momKpis').style.display='';$('momTug').style.display='none';
+   $('momNote').innerHTML=(single?T.wideNote(D.n):'')+T.momNote(D.momagg);}
+ const wide=single?T.wideNote(D.n):'';
+ $('xgNote').innerHTML=wide+T.xgNote(D.xgwin.n);
+ $('subNote').innerHTML=wide+T.subNote(D.subagg.y2026);
+ $('welNote').innerHTML=wide+T.welNote(D.welfare);
+}
+
+// ---------- VERDICT ----------
+function renderVerdict(){
+ const T=L();
+ const o1=aggBreak(G,'b1'),o2=aggBreak(G,'b2');const pre=o1.g[0]+o2.g[0],post=o1.g[1]+o2.g[1];
+ const pWithin=binom(post,pre+post);
+ const hot=G.filter(g=>g.wbgt>=28);const h1=aggBreak(hot,'b1'),h2=aggBreak(hot,'b2');const hpre=h1.g[0]+h2.g[0],hpost=h1.g[1]+h2.g[1];const pHot=binom(hpost,hpre+hpost);
+ const pBase=baselineP(post,pre+post);
+ const any=[pWithin,pHot,pBase].some(p=>!isNaN(p)&&p<0.05);
+ $('vEyebrow').textContent=T.vEyebrow(D.n);
+ $('vAnswer').textContent=any?T.vYes:T.vNo;
+ const ps=[pWithin,pHot,pBase].filter(x=>!isNaN(x));$('vMeter').innerHTML=meterSVG(ps.length?Math.min.apply(null,ps):NaN);
+ $('vLead').textContent=T.vLead(pre,post,D.n);
+ const pill=p=>{const c=conf(p);return `<span class="vstat ${vstatC[c.lvl]}">${c.t}</span>`;};
+ const tests=[[T.vt1,T.vt1n(pre,post),pWithin],[T.vt2(),T.vt2n(hpre,hpost,hot.length),pHot],[T.vt3,T.vt3n(Math.round(post/(pre+post)*100)),pBase]];
+ $('vTests').innerHTML=tests.map(([n,num,p])=>`<div class="vtest"><div class="vname">${n}<div class="vnum">${num}</div></div>${pill(p)}</div>`).join('');
+ $('vTrend').textContent=T.vTrend;$('vNext').textContent=T.vNext;
+}
+
+// ---------- GLOSSARY ----------
+function renderGlossary(){$('glossList').innerHTML=L().gloss.map(([t,d])=>`<div class="gloss"><div class="gt">${t}</div><div class="gd">${d}</div></div>`).join('');}
+
+// ---------- SURVEY ----------
+let answers={};
+const SB_URL="__SBURL__",SB_KEY="__SBKEY__";
+const sbOn=()=>SB_URL.slice(0,4)==="http"&&SB_KEY.length>20;
+const sbHdr=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'});
+let voted=false;try{voted=localStorage.getItem('ce_voted')==='1';}catch(e){}
+function setSubmit(){const b=$('submitSurvey');if(!b)return;if(voted){b.disabled=true;b.textContent=L().svThanks;}else{b.disabled=false;b.textContent=L().sv_submit;}}
+function buildSurvey(){const T=L();
+ $('survey').innerHTML=T.sq.map(q=>`<div class="q"><div class="qt">${q.q}</div><div class="opts" data-q="${q.id}">${q.o.map((o,i)=>`<button data-v="${i}">${o}</button>`).join('')}</div></div>`).join('');
+ $('survey').querySelectorAll('.opts').forEach(r=>r.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(voted)return;r.querySelectorAll('button').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');answers[r.dataset.q]=+b.dataset.v;}));
+ answers={};setSubmit();tallyFn();}
+const loadR=()=>{try{return JSON.parse(localStorage.getItem('ce_survey')||'[]');}catch(e){return[];}};
+const saveR=r=>{try{localStorage.setItem('ce_survey',JSON.stringify(r));}catch(e){}};
+function localAgg(r){const m={};r.forEach(x=>['b1feel','b2feel'].forEach(q=>{if(x[q]!=null){const k=q+':'+x[q];m[k]=(m[k]||0)+1;}}));return m;}
+async function tallyFn(){const T=L();
+ if(sbOn()){try{const rows=await fetch(SB_URL+'/rest/v1/poll_counts?select=id,n',{headers:sbHdr()}).then(r=>r.json());
+   const m={};(rows||[]).forEach(x=>m[x.id]=x.n);const tot=[0,1,2,3].reduce((s,i)=>s+(m['b1feel:'+i]||0),0);
+   $('tally').textContent=T.svTally(tot);drawSurveyCounts(m);}catch(e){$('tally').textContent=T.svTally(0);}}
+ else{const r=loadR();$('tally').textContent=T.svTally(r.length);if(r.length)drawSurveyCounts(localAgg(r));}}
+function drawSurveyCounts(m){const T=L();$('surveyChartBox').style.display='block';
+ const c=[0,1,2,3].map(i=>[m['b1feel:'+i]||0,m['b2feel:'+i]||0]);
+ if(surveyChart)surveyChart.destroy();Chart.defaults.color=chartColor();
+ surveyChart=new Chart($('cSurvey'),{type:'bar',data:{labels:T.svFeel,datasets:[{label:T.svAfter1,data:c.map(x=>x[0]),backgroundColor:GREY,borderRadius:4},{label:T.svAfter2,data:c.map(x=>x[1]),backgroundColor:GREEN,borderRadius:4}]},
+  options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});}
+
+// ---------- refresh on toggle ----------
+function fullRefresh(){
+ applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();
+ if(distChart){distChart.destroy();histChart.destroy();xgChart.destroy();momChart.destroy();subChart.destroy();welChart.destroy();made.analysis=false;}
+ if(state.tab==='analysis')renderAnalysis(); if(state.tab==='verdict')renderVerdict();
+ if(state.tab==='bracket')renderBracket(); if(state.tab==='updates')renderUpdates();
+}
+
+// ---------- wiring ----------
+$('nav').querySelectorAll('button').forEach(b=>b.onclick=()=>showTab(b.dataset.t));
+$('selMatch').onchange=function(){state.sel=this.value;renderAnalysis();};
+$('segStage').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segStage').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.stage=b.dataset.st;renderAnalysis();});
+$('segHeat').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segHeat').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.heat=b.dataset.h;renderAnalysis();});
+$('moreBtn').onclick=()=>{state.more=!state.more;$('moreWrap').style.display=state.more?'':'none';$('moreBtn').textContent=state.more?L().moreHide:L().moreShow;if(state.more&&histChart){histChart.resize();xgChart.resize();momChart.resize();}};
+$('langBtn').onclick=()=>{state.lang=state.lang==='en'?'es':'en';fullRefresh();};
+$('themeBtn').onclick=()=>{state.theme=state.theme==='dark'?'light':'dark';document.body.classList.toggle('dark',state.theme==='dark');fullRefresh();};
+$('unitBtn').onclick=()=>{state.unit=state.unit==='c'?'f':'c';fullRefresh();};
+$('shareBtn').onclick=()=>{const T=L();const o1=aggBreak(G,'b1'),o2=aggBreak(G,'b2');const pre=o1.g[0]+o2.g[0],post=o1.g[1]+o2.g[1];
+ const txt=T.shareText($('vAnswer').textContent||'',pre,post,D.n);const b=$('shareBtn');
+ const done=()=>{b.textContent=T.shareDone;setTimeout(()=>b.textContent=T.share,2000);};
+ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done,done);}else{done();}};
+$('submitSurvey').onclick=async()=>{const T=L();const choices=Object.keys(answers).map(k=>k+':'+answers[k]);
+ if(!choices.length)return;
+ if(sbOn()){const b=$('submitSurvey');b.disabled=true;
+   try{const res=await fetch(SB_URL+'/rest/v1/rpc/vote',{method:'POST',headers:sbHdr(),body:JSON.stringify({choices})});if(!res.ok)throw 0;
+     voted=true;try{localStorage.setItem('ce_voted','1');}catch(e){}setSubmit();tallyFn();}
+   catch(e){b.disabled=false;b.textContent=T.svErr;setTimeout(setSubmit,2500);}}
+ else{const r=loadR();r.push(Object.assign({ts:new Date().toISOString()},answers));saveR(r);voted=true;try{localStorage.setItem('ce_voted','1');}catch(e){}setSubmit();tallyFn();}};
+
+// ---------- init ----------
+document.body.classList.toggle('dark',state.theme==='dark');
+applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();armReveal();
+</script>
+</body></html>"""
+
+LINKEDIN=os.environ.get("CE_LINKEDIN","https://www.linkedin.com/in/rdflopez/")
+BASEURL=os.environ.get("CE_BASEURL","https://rograph.github.io/cooling-economy").rstrip("/")
+OGIMAGE=(BASEURL+"/" if BASEURL else "")+"cooling_economy_card.png"
+FAVICON="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%E2%9A%BD</text></svg>"
+# Shared-survey backend defaults (publishable key is browser-safe; protected by row-level security)
+SB_URL=os.environ.get("CE_SB_URL","https://ooinullcvyctuquijyjv.supabase.co").rstrip("/")
+SB_KEY=os.environ.get("CE_SB_KEY","sb_publishable_cn0TpE-30PM5agXBFBMhgg_tDlv3oW6")
+html=(HTML.replace("__DATA__",json.dumps(DATA)).replace("__UPDATED__",DATA["updated"]).replace("__LINKEDIN__",LINKEDIN)
+      .replace("__OGIMAGE__",OGIMAGE).replace("__BASEURL__",BASEURL or "").replace("__FAVICON__",FAVICON)
+      .replace("__SBURL__",SB_URL).replace("__SBKEY__",SB_KEY))
+open(OUT,"w",encoding="utf-8").write(html)
+left=[t for t in ("__DATA__","__UPDATED__","__LINKEDIN__","__OGIMAGE__","__BASEURL__","__FAVICON__","__SBURL__","__SBKEY__") if t in html]
+print("wrote",OUT,len(html),"bytes; games:",N,"; unresolved:",left)
