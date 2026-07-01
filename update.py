@@ -146,11 +146,25 @@ def wbgt_for(coords, utc_date, hour):
 
 COLS = ["g_before","g_after","c_before","c_after","s_before","s_after","lc_before","lc_after","cm_before","cm_after"]
 
-def existing_keys(con):
-    keys = set()
+def load_existing(con):
+    rows = []
     for h, a, d in con.execute("SELECT home_team, away_team, date FROM matches"):
-        keys.add((frozenset((nm(h), nm(a))), d))
-    return keys
+        rows.append((frozenset((nm(h), nm(a))), d))
+    return rows
+
+def is_dup(existing, teamset, date_iso):
+    """Same pairing within a day counts as the same match (guards against
+    UTC-vs-local date drift for late kickoffs that cross midnight)."""
+    try: dd = datetime.date.fromisoformat(date_iso)
+    except Exception: dd = None
+    for ts, d in existing:
+        if ts != teamset: continue
+        if d == date_iso: return True
+        if dd is not None:
+            try:
+                if abs((datetime.date.fromisoformat(d) - dd).days) <= 1: return True
+            except Exception: pass
+    return False
 
 def upsert(con, ev):
     mid = f"WC2026-{ev['date'].replace('-','')}-{code(ev['home'])}-{code(ev['away'])}"
@@ -184,7 +198,7 @@ def selftest():
 def main():
     if os.environ.get("CE_SELFTEST"): selftest()
     con = sqlite3.connect(DB)
-    have = existing_keys(con)
+    have = load_existing(con)
     today = datetime.datetime.utcnow().date()
     dates = [today - datetime.timedelta(days=1), today]  # yesterday + today (UTC)
     added = []
@@ -202,8 +216,8 @@ def main():
             A = next(c for c in comp["competitors"] if c["homeAway"] == "away")
             home, away = H["team"]["displayName"], A["team"]["displayName"]
             date_iso = comp["date"][:10]
-            key = (frozenset((nm(home), nm(away))), date_iso)
-            if key in have:
+            teamset = frozenset((nm(home), nm(away)))
+            if is_dup(have, teamset, date_iso):
                 continue
             try:
                 summ = get(f"{ESPN}/summary?event={e['id']}")
@@ -219,7 +233,7 @@ def main():
                   "gmin": goal_str(goals), "w1": w1, "w2": w2}
             if wx: ev["temp"], ev["rh"], ev["wbgt"] = wx
             mid = upsert(con, ev)
-            have.add(key)
+            have.append((teamset, date_iso))
             added.append(f"{ev['home']} {ev['hg']}-{ev['ag']} {ev['away']} ({ev['stage']}, WBGT {ev.get('wbgt')})")
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
