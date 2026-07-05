@@ -235,11 +235,31 @@ def main():
             mid = upsert(con, ev)
             have.append((teamset, date_iso))
             added.append(f"{ev['home']} {ev['hg']}-{ev['ag']} {ev['away']} ({ev['stage']}, WBGT {ev.get('wbgt')})")
+    # Self-heal: retry weather for matches whose WBGT is missing (transient failures)
+    fixed = []
+    for mid, venue, ko, date in con.execute(
+            "SELECT match_id, venue, kickoff_local, date FROM matches WHERE wbgt_kickoff IS NULL"):
+        coords = venue_coords(venue)
+        if not coords:
+            continue
+        try:
+            hh = int((ko or "12:00")[:2])
+        except Exception:
+            hh = 12
+        wx = wbgt_for(coords, date, hh)
+        if wx:
+            con.execute("UPDATE matches SET temp_c_kickoff=?, humidity_kickoff=?, wbgt_kickoff=?, "
+                        "wbgt_confidence='estimate (shade approx)' WHERE match_id=?",
+                        (wx[0], wx[1], wx[2], mid))
+            fixed.append(f"{mid} -> WBGT {wx[2]}")
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
     con.close()
     print(f"added {len(added)} match(es); store now {n}")
     for a in added: print("  +", a)
+    if fixed:
+        print(f"backfilled WBGT for {len(fixed)} match(es):")
+        for f2 in fixed: print("  ~", f2)
     # write a flag file the workflow can read
     with open(os.environ.get("CE_ADDED_FILE", "/tmp/ce_added.txt"), "w") as f:
         f.write(str(len(added)))

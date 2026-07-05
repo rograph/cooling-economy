@@ -307,6 +307,12 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
    <div class="kgrid" id="welKpis" style="grid-template-columns:repeat(3,1fr)"></div>
    <div class="chartbox sm"><canvas id="cWel"></canvas></div><div class="note" id="welNote"></div>
   </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_heat2_h"></div><div class="sect-s" data-i18n="an_heat2_s"></div>
+   <div class="chartbox"><canvas id="cHeatScatter"></canvas></div>
+   <div class="heatlegend" id="heatScatterLegend"></div>
+   <div class="note" id="heatScatterNote"></div>
+  </div>
   </div>
  </div>
 
@@ -371,7 +377,7 @@ let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'light',u
 function toF(c){return c*9/5+32;}
 function tU(c,dec){dec=(dec==null?0:dec);c=Number(c);return state.unit==='f'?(toF(c).toFixed(dec)+'°F'):(c.toFixed(dec)+'°C');}
 let made={analysis:false};
-let distChart,histChart,xgChart,momChart,subChart,welChart,surveyChart;
+let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart;
 const U=D.updated;
 
 // ---------- i18n ----------
@@ -408,6 +414,10 @@ const TR={
   subLeg26:'2026 (with breaks)',subLeg22:'2022 (no breaks)',
   subNote:(s)=>`No. The early break at 22' sees almost no subs (${s.b1} in the whole tournament), and the second only has subs because it lands in the normal 60-to-75 minute window. The gold 2022 line, which had no breaks, sits almost on top of 2026: same flat spot at 22', same half-time and late spikes. So the breaks changed nothing about when coaches sub. 2026: ${s.n} games; 2022: 48.`,
   an_wel_h:'Do the breaks protect players in the heat?',an_wel_s:'Injury stoppages and injury subs per game, counted from live commentary. Are hot games harder on the players?',
+  an_heat2_h:'Does the heat itself change the game?',
+  an_heat2_s:'Set the breaks aside for a moment. Each dot is a match: its real-feel heat against the total goals scored. If heat slowed matches down, the hotter ones would sit lower.',
+  heatScatterLeg:()=>['Cooler games','Hot games ('+tU(28,0)+'+)'],
+  heatScatterNote:(r,hotAvg,coolAvg,n)=>{const a=Math.abs(r),d=a<0.1?'essentially no link':a<0.3?'a weak link':a<0.5?'a moderate link':'a clear link';return `Each dot is one of the ${n} matches with a heat reading. The dotted line is the trend, and it points to <b>${d}</b> between heat and scoring (r = ${r.toFixed(2)}). Hotter matches average <b>${hotAvg}</b> goals versus <b>${coolAvg}</b> in cooler ones. So on the evidence so far, heat ${a<0.1?'barely moves the score':(r<0?'nudges scoring down as it climbs':'nudges scoring up as it climbs')}.`;},
   welLeg:()=>['Hot games (real-feel '+tU(28,0)+'+)','Cooler games'],welAxis:['Whole game','Last 20 min'],
   welK:['Stoppages per game','Share in the last 20 min','Hot vs cool, per game'],
   welNote:(w)=>`Counted from live commentary (treatment stoppages and injury subs), the same way published World Cup injury studies do it. Treatments climb late as legs tire. The surprise: <b>hot games are not harder on players</b>, they have fewer stoppages, not more (${w.hot.ev} vs ${w.cool.ev} per game). That fits the breaks doing their job in heat, though slower, calmer hot games could explain it too. Versus 2022 (no breaks), the late-game share of injuries is about the same (34% then vs ${w.latePct}% now), so the breaks did not change when injuries strike. Broadcast-counted, not official medical data; we compare shares, not raw counts, since how fully each match is narrated differs by year.`,
@@ -425,6 +435,7 @@ const TR={
   rounds:{R32:'Round of 32',R16:'Round of 16',QF:'Quarter-finals',SF:'Semi-finals',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · FIFA World Cup 2026\nDo hydration breaks change the game? ${ans}\nGoals in the 10 min before vs after the breaks: ${pre} vs ${post}, across ${n} matches.`,
   updates:[
+   ['2026-07-05','Heat vs goals','New scatter in the deeper analysis: real-feel heat against total goals, one dot per match, to see if heat alone changes scoring. Also patched a missing heat reading so every match with a known venue now has one.'],
    ['2026-07-01','More knockout games','Added Mexico 2-0 Ecuador, another hot one, so all three June 30 Round-of-32 games are in. 79 matches now, and the fan survey has a cleaner live results chart.'],
    ['2026-06-30','Today\'s matches added','Added the June 30 Round-of-32 games (Côte d\'Ivoire 1-2 Norway, France 3-0 Sweden), both played in real-feel heat above 29°C. Now 78 matches in the store.'],
    ['2026-06-30','New visuals + clearer wording','Added a momentum tug-of-war and a goals-on-the-pitch timeline for single matches, a °C/°F switch, and a plain-English rewrite of the chance-quality (xG) panel. The break tables now show how they reconcile with the final score.'],
@@ -531,6 +542,10 @@ const TR={
   subLeg26:'2026 (con pausas)',subLeg22:'2022 (sin pausas)',
   subNote:(s)=>`No. La pausa temprana del 22' casi no tiene cambios (${s.b1} en todo el torneo), y la segunda solo tiene cambios porque cae en la ventana normal del minuto 60 al 75. La línea dorada de 2022, sin pausas, queda casi encima de 2026: mismo vacío en el 22', mismos picos del entretiempo y del final. Las pausas no cambiaron cuándo se hacen los cambios. 2026: ${s.n} partidos; 2022: 48.`,
   an_wel_h:'¿Las pausas protegen a los jugadores en el calor?',an_wel_s:'Pausas por lesión y cambios por lesión por partido, contados desde el relato en vivo. ¿Los partidos con calor son más duros para los jugadores?',
+  an_heat2_h:'¿El calor en sí cambia el partido?',
+  an_heat2_s:'Dejemos las pausas de lado un momento. Cada punto es un partido: su sensación térmica frente al total de goles. Si el calor frenara los partidos, los más calurosos estarían más abajo.',
+  heatScatterLeg:()=>['Partidos frescos','Partidos con calor ('+tU(28,0)+'+)'],
+  heatScatterNote:(r,hotAvg,coolAvg,n)=>{const a=Math.abs(r),d=a<0.1?'prácticamente ninguna relación':a<0.3?'una relación débil':a<0.5?'una relación moderada':'una relación clara';return `Cada punto es uno de los ${n} partidos con dato de calor. La línea punteada es la tendencia y apunta a <b>${d}</b> entre el calor y los goles (r = ${r.toFixed(2)}). Los partidos calurosos promedian <b>${hotAvg}</b> goles frente a <b>${coolAvg}</b> en los más frescos. Así que por ahora, el calor ${a<0.1?'casi no mueve el marcador':(r<0?'baja levemente el marcador cuando sube':'sube levemente el marcador cuando sube')}.`;},
   welLeg:()=>['Partidos con calor (sensación '+tU(28,0)+'+)','Partidos más frescos'],welAxis:['Todo el partido','Últimos 20 min'],
   welK:['Pausas por lesión por partido','Parte en los últimos 20 min','Calor vs fresco, por partido'],
   welNote:(w)=>`Contado desde el relato en vivo (pausas de atención y cambios por lesión), como lo hacen los estudios publicados de lesiones del Mundial. Las atenciones suben al final, cuando las piernas se cansan. La sorpresa: <b>los partidos con calor no son más duros</b>, tienen menos pausas, no más (${w.hot.ev} vs ${w.cool.ev} por partido). Eso encaja con que las pausas hacen su trabajo en el calor, aunque partidos más lentos y tranquilos también podrían explicarlo. Frente a 2022 (sin pausas), la parte de lesiones al final es casi igual (34% entonces vs ${w.latePct}% ahora), así que las pausas no cambiaron cuándo ocurren las lesiones. Contado por relato, no datos médicos oficiales; comparamos partes, no conteos, porque el detalle del relato cambia según el año.`,
@@ -548,6 +563,7 @@ const TR={
   rounds:{R32:'Dieciseisavos',R16:'Octavos',QF:'Cuartos',SF:'Semifinales',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · Copa del Mundo 2026\n¿Las pausas de hidratación cambian el partido? ${ans}\nGoles en los 10 min antes vs después de las pausas: ${pre} vs ${post}, en ${n} partidos.`,
   updates:[
+   ['2026-07-05','Calor vs goles','Nuevo gráfico de dispersión en el análisis profundo: sensación térmica frente al total de goles, un punto por partido, para ver si el calor por sí solo cambia el marcador. También se corrigió un dato de calor faltante, así que todo partido con estadio conocido ya lo tiene.'],
    ['2026-07-01','Más octavos','Se agregó México 2-0 Ecuador, otro con calor, así que ya están los tres partidos de octavos del 30 de junio. Ya son 79 partidos, y la encuesta tiene un gráfico de resultados en vivo más claro.'],
    ['2026-06-30','Partidos de hoy','Se agregaron los octavos del 30 de junio (Côte d\'Ivoire 1-2 Noruega, Francia 3-0 Suecia), ambos con sensación térmica sobre 29°C. Ya son 78 partidos en la base.'],
    ['2026-06-30','Nuevos gráficos y textos más claros','Se agregó un tira y afloja de momentum y una línea de goles sobre la cancha por partido, un botón °C/°F, y una reescritura en lenguaje simple del panel de calidad de ocasiones (xG). Las tablas de pausas ahora muestran cómo cuadran con el marcador.'],
@@ -842,6 +858,20 @@ function makeAnalysis(){
   options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,title:{display:true,text:state.lang==='es'?'por partido':'per game'}}}}});
  $('welKpis').innerHTML=[[W.perMatch,T.welK[0]],[W.latePct+'%',T.welK[1]],[W.hot.ev+' v '+W.cool.ev,T.welK[2]]].map(([v,l])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
  $('welNote').innerHTML=T.welNote(W);
+ // heat vs total goals (tournament-wide scatter)
+ const hs=G.filter(g=>g.wbgt!=null).map(g=>({x:(state.unit==='f'?+toF(g.wbgt).toFixed(1):g.wbgt),y:g.hg+g.ag,hot:g.wbgt>=28}));
+ const nH=hs.length,mX=hs.reduce((s,p)=>s+p.x,0)/nH,mY=hs.reduce((s,p)=>s+p.y,0)/nH;
+ let sxy=0,sxx=0,syy=0;hs.forEach(p=>{sxy+=(p.x-mX)*(p.y-mY);sxx+=(p.x-mX)*(p.x-mX);syy+=(p.y-mY)*(p.y-mY);});
+ const slope=sxx?sxy/sxx:0,intc=mY-slope*mX,rr=(sxx&&syy)?sxy/Math.sqrt(sxx*syy):0;
+ const xsAll=hs.map(p=>p.x),xmn=Math.min.apply(null,xsAll),xmx=Math.max.apply(null,xsAll);
+ const xlab=(state.lang==='es'?'sensación térmica':'real-feel heat')+' ('+(state.unit==='f'?'°F':'°C')+')';
+ heatScatter=new Chart($('cHeatScatter'),{data:{datasets:[
+   {type:'line',label:'trend',data:[{x:xmn,y:intc+slope*xmn},{x:xmx,y:intc+slope*xmx}],borderColor:GOLD,borderWidth:2.5,borderDash:[6,4],pointRadius:0,fill:false},
+   {type:'scatter',label:'match',data:hs,pointBackgroundColor:hs.map(p=>p.hot?'rgba(255,77,109,.72)':'rgba(94,160,255,.72)'),pointBorderColor:hs.map(p=>p.hot?'#ff4d6d':'#5ea0ff'),pointBorderWidth:1,pointRadius:5,pointHoverRadius:7}
+ ]},options:{plugins:{legend:{display:false}},scales:{x:{type:'linear',title:{display:true,text:xlab},grid:{display:false}},y:{beginAtZero:true,title:{display:true,text:state.lang==='es'?'goles en el partido':'goals in the match'},ticks:{precision:0}}}}});
+ const hotG=G.filter(g=>g.wbgt!=null&&g.wbgt>=28),coolG=G.filter(g=>g.wbgt!=null&&g.wbgt<28),avgG=a=>a.length?(a.reduce((s,g)=>s+g.hg+g.ag,0)/a.length).toFixed(2):'0';
+ $('heatScatterLegend').innerHTML=T.heatScatterLeg().map((l,i)=>`<span class="hl"><span class="dot" style="background:${['#5ea0ff','#ff4d6d'][i]}"></span>${l}</span>`).join('');
+ $('heatScatterNote').innerHTML=T.heatScatterNote(rr,avgG(hotG),avgG(coolG),nH);
 }
 function fillMatchSelect(){const T=L();const sel=$('selMatch');sel.innerHTML=`<option value="all">${T.opt_all}</option>`+G.map(g=>`<option value="${g.id}">${flag(g.home)} ${g.home} ${g.hg}-${g.ag} ${g.away} ${flag(g.away)} · ${g.date}</option>`).join('');sel.value=state.sel;}
 
@@ -947,7 +977,7 @@ function drawSurveyCounts(m){const T=L();$('surveyChartBox').style.display='bloc
 // ---------- refresh on toggle ----------
 function fullRefresh(){
  applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();
- if(distChart){distChart.destroy();histChart.destroy();xgChart.destroy();momChart.destroy();subChart.destroy();welChart.destroy();made.analysis=false;}
+ if(distChart){distChart.destroy();histChart.destroy();xgChart.destroy();momChart.destroy();subChart.destroy();welChart.destroy();if(heatScatter)heatScatter.destroy();made.analysis=false;}
  if(state.tab==='analysis')renderAnalysis(); if(state.tab==='verdict')renderVerdict();
  if(state.tab==='bracket')renderBracket(); if(state.tab==='updates')renderUpdates();
 }
