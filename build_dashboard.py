@@ -328,6 +328,11 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
    <div class="sect-h" data-i18n="v_tests_h"></div><div class="sect-s" data-i18n="v_tests_s"></div>
    <div id="vTests"></div>
   </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="v_track_h"></div><div class="sect-s" data-i18n="v_track_s"></div>
+   <div class="chartbox"><canvas id="cTrack"></canvas></div>
+   <div class="note" id="trackNote"></div>
+  </div>
   <div class="card two">
    <div><div class="sect-h" data-i18n="v_trend_h"></div><p class="vtext" id="vTrend"></p></div>
    <div><div class="sect-h" data-i18n="v_next_h"></div><p class="vtext" id="vNext"></p></div>
@@ -364,6 +369,7 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
     <span class="tally" id="tally"></span>
    </div>
    <div class="chartbox sm" id="surveyChartBox" style="display:none;margin-top:14px"><canvas id="cSurvey"></canvas></div>
+   <div id="perception"></div>
    <div class="note" data-i18n="sv_note"></div>
   </div>
  </div>
@@ -377,7 +383,7 @@ let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'light',u
 function toF(c){return c*9/5+32;}
 function tU(c,dec){dec=(dec==null?0:dec);c=Number(c);return state.unit==='f'?(toF(c).toFixed(dec)+'°F'):(c.toFixed(dec)+'°C');}
 let made={analysis:false};
-let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart;
+let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart,trackChart;
 const U=D.updated;
 
 // ---------- i18n ----------
@@ -423,6 +429,10 @@ const TR={
   welNote:(w)=>`Counted from live commentary (treatment stoppages and injury subs), the same way published World Cup injury studies do it. Treatments climb late as legs tire. The surprise: <b>hot games are not harder on players</b>, they have fewer stoppages, not more (${w.hot.ev} vs ${w.cool.ev} per game). That fits the breaks doing their job in heat, though slower, calmer hot games could explain it too. Versus 2022 (no breaks), the late-game share of injuries is about the same (34% then vs ${w.latePct}% now), so the breaks did not change when injuries strike. Broadcast-counted, not official medical data; we compare shares, not raw counts, since how fully each match is narrated differs by year.`,
   v_tests_h:'Three ways to check it',v_tests_s:'Each one asks the same question a different way: is the game really quieter right after a break? Green means it looks real, amber means maybe, grey means it could just be chance.',
   v_trend_h:'How the picture has moved',v_next_h:'What would change the answer',
+  v_track_h:'Is the gap real, or just noise?',v_track_s:'The share of break-window goals that came after the break, tracked as matches piled up. If breaks did nothing it sits at 50%. The band is the 95% confidence range.',
+  trackNote:(cur,n)=>`Right now it sits at <b>${cur}%</b> across ${n} matches, and the confidence band still crosses the 50% no-effect line, so the gap is within chance. As more games arrive the line should hug 50% and the band should tighten. A real effect would pull the whole band off 50%.`,
+  perceptionLow:'<div class="scopebanner">📊 Once a few more people vote, this box compares what fans felt with what the data shows.</div>',
+  perception:(morePct,noticed,pre,post)=>{const dir=post<pre?'a slight dip':(post>pre?'a slight rise':'no change');const mm=morePct>=55&&post<=pre;return `<div class="scopebanner">Of the ${noticed} fans who felt a change, <b>${morePct}%</b> said the game got <b>more intense</b> after a break. The data leans the other way: goals in the 10 minutes after a break are <b>${post}</b> versus <b>${pre}</b> before, ${dir}. ${mm?'So the breaks feel more eventful than they actually are.':'Gut and numbers are roughly in line here.'}</div>`;},
   gl_title:'Plain-language glossary',gl_sub:'Every term on this dashboard, spelled out. No stats degree required.',
   sv_title:'Did the breaks change how the game felt?',sv_sub:'Vote once and watch how everyone answered, live. Results are shared across all visitors and update as people vote.',
   sv_submit:'Submit response',sv_export:'Export CSV',
@@ -435,6 +445,7 @@ const TR={
   rounds:{R32:'Round of 32',R16:'Round of 16',QF:'Quarter-finals',SF:'Semi-finals',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · FIFA World Cup 2026\nDo hydration breaks change the game? ${ans}\nGoals in the 10 min before vs after the breaks: ${pre} vs ${post}, across ${n} matches.`,
   updates:[
+   ['2026-07-06','Perception vs reality + a noise check','Two additions: the Verdict tab now tracks the before-vs-after gap with a 95% confidence band as matches pile up, so you can watch it hug the no-effect line. And the survey now compares what fans felt against what the data shows.'],
    ['2026-07-05','Heat vs goals','New scatter in the deeper analysis: real-feel heat against total goals, one dot per match, to see if heat alone changes scoring. Also patched a missing heat reading so every match with a known venue now has one.'],
    ['2026-07-01','More knockout games','Added Mexico 2-0 Ecuador, another hot one, so all three June 30 Round-of-32 games are in. 79 matches now, and the fan survey has a cleaner live results chart.'],
    ['2026-06-30','Today\'s matches added','Added the June 30 Round-of-32 games (Côte d\'Ivoire 1-2 Norway, France 3-0 Sweden), both played in real-feel heat above 29°C. Now 78 matches in the store.'],
@@ -551,6 +562,10 @@ const TR={
   welNote:(w)=>`Contado desde el relato en vivo (pausas de atención y cambios por lesión), como lo hacen los estudios publicados de lesiones del Mundial. Las atenciones suben al final, cuando las piernas se cansan. La sorpresa: <b>los partidos con calor no son más duros</b>, tienen menos pausas, no más (${w.hot.ev} vs ${w.cool.ev} por partido). Eso encaja con que las pausas hacen su trabajo en el calor, aunque partidos más lentos y tranquilos también podrían explicarlo. Frente a 2022 (sin pausas), la parte de lesiones al final es casi igual (34% entonces vs ${w.latePct}% ahora), así que las pausas no cambiaron cuándo ocurren las lesiones. Contado por relato, no datos médicos oficiales; comparamos partes, no conteos, porque el detalle del relato cambia según el año.`,
   v_tests_h:'Tres formas de comprobarlo',v_tests_s:'Cada una hace la misma pregunta de otra forma: ¿de verdad el juego baja justo después de un pausa? Verde significa que parece real, ámbar que quizás, gris que podría ser casualidad.',
   v_trend_h:'Cómo ha cambiado el panorama',v_next_h:'Qué cambiaría la respuesta',
+  v_track_h:'¿La diferencia es real o solo ruido?',v_track_s:'La proporción de goles de la ventana de pausa que cayeron después de la pausa, seguida a medida que se suman partidos. Si las pausas no hicieran nada, se queda en 50%. La banda es el rango de confianza del 95%.',
+  trackNote:(cur,n)=>`Ahora mismo está en <b>${cur}%</b> con ${n} partidos, y la banda de confianza todavía cruza la línea de 50% (sin efecto), así que la diferencia está dentro del azar. A medida que lleguen más juegos, la línea debería pegarse al 50% y la banda estrecharse. Un efecto real jalaría toda la banda fuera del 50%.`,
+  perceptionLow:'<div class="scopebanner">📊 Cuando voten unas cuantas personas más, esta caja compara lo que sintieron los fans con lo que dicen los datos.</div>',
+  perception:(morePct,noticed,pre,post)=>{const dir=post<pre?'una leve caída':(post>pre?'una leve subida':'sin cambio');const mm=morePct>=55&&post<=pre;return `<div class="scopebanner">De los ${noticed} fans que sintieron un cambio, <b>${morePct}%</b> dijeron que el juego se puso <b>más intenso</b> tras una pausa. Los datos van al revés: los goles en los 10 minutos después de una pausa son <b>${post}</b> frente a <b>${pre}</b> antes, ${dir}. ${mm?'Así que las pausas se sienten más movidas de lo que en realidad son.':'La percepción y los números van más o menos parejos aquí.'}</div>`;},
   gl_title:'Glosario en palabras sencillas',gl_sub:'Cada término del tablero, explicado. No hace falta saber de estadística.',
   sv_title:'¿Las pausas cambiaron cómo se sintió el partido?',sv_sub:'Vota una vez y mira cómo respondió todo el mundo, en vivo. Los resultados se comparten entre todos y se actualizan a medida que la gente vota.',
   sv_submit:'Enviar respuesta',sv_export:'Exportar CSV',
@@ -563,6 +578,7 @@ const TR={
   rounds:{R32:'Dieciseisavos',R16:'Octavos',QF:'Cuartos',SF:'Semifinales',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · Copa del Mundo 2026\n¿Las pausas de hidratación cambian el partido? ${ans}\nGoles en los 10 min antes vs después de las pausas: ${pre} vs ${post}, en ${n} partidos.`,
   updates:[
+   ['2026-07-06','Percepción vs realidad + prueba de ruido','Dos añadidos: la pestaña Veredicto ahora sigue la diferencia antes-vs-después con una banda de confianza del 95% a medida que se suman partidos, para verla pegarse a la línea de sin efecto. Y la encuesta ahora compara lo que sintieron los fans con lo que dicen los datos.'],
    ['2026-07-05','Calor vs goles','Nuevo gráfico de dispersión en el análisis profundo: sensación térmica frente al total de goles, un punto por partido, para ver si el calor por sí solo cambia el marcador. También se corrigió un dato de calor faltante, así que todo partido con estadio conocido ya lo tiene.'],
    ['2026-07-01','Más octavos','Se agregó México 2-0 Ecuador, otro con calor, así que ya están los tres partidos de octavos del 30 de junio. Ya son 79 partidos, y la encuesta tiene un gráfico de resultados en vivo más claro.'],
    ['2026-06-30','Partidos de hoy','Se agregaron los octavos del 30 de junio (Côte d\'Ivoire 1-2 Noruega, Francia 3-0 Suecia), ambos con sensación térmica sobre 29°C. Ya son 78 partidos en la base.'],
@@ -944,6 +960,22 @@ function renderVerdict(){
  const tests=[[T.vt1,T.vt1n(pre,post),pWithin],[T.vt2(),T.vt2n(hpre,hpost,hot.length),pHot],[T.vt3,T.vt3n(Math.round(post/(pre+post)*100)),pBase]];
  $('vTests').innerHTML=tests.map(([n,num,p])=>`<div class="vtest"><div class="vname">${n}<div class="vnum">${num}</div></div>${pill(p)}</div>`).join('');
  $('vTrend').textContent=T.vTrend;$('vNext').textContent=T.vNext;
+ drawTracker();
+}
+function drawTracker(){const T=L();
+ const gs=[...G].sort((a,b)=>(a.date<b.date?-1:a.date>b.date?1:0));
+ let pre=0,post=0;const xs=[],share=[],up=[],lo=[],ref=[];
+ gs.forEach((g,idx)=>{pre+=g.b1.g[0]+g.b2.g[0];post+=g.b1.g[1]+g.b2.g[1];const nT=pre+post;
+   if(nT>=8){const p=post/nT,se=Math.sqrt(p*(1-p)/nT);xs.push(idx+1);share.push(+(p*100).toFixed(1));up.push(+Math.min(100,(p+1.96*se)*100).toFixed(1));lo.push(+Math.max(0,(p-1.96*se)*100).toFixed(1));ref.push(50);}});
+ const cur=share.length?Math.round(share[share.length-1]):50;
+ if(trackChart)trackChart.destroy();Chart.defaults.color=chartColor();
+ trackChart=new Chart($('cTrack'),{type:'line',data:{labels:xs,datasets:[
+   {label:'up',data:up,borderColor:'transparent',backgroundColor:'rgba(94,160,255,.16)',pointRadius:0,fill:'+1',tension:.3},
+   {label:'lo',data:lo,borderColor:'transparent',backgroundColor:'rgba(94,160,255,.16)',pointRadius:0,fill:false,tension:.3},
+   {label:'ref',data:ref,borderColor:GREY,borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false},
+   {label:'share',data:share,borderColor:PB(),borderWidth:2.6,pointRadius:0,tension:.3,fill:false}
+ ]},options:{plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:state.lang==='es'?'partidos jugados':'matches played'},ticks:{maxTicksLimit:8}},y:{suggestedMin:25,suggestedMax:75,title:{display:true,text:state.lang==='es'?'% de goles tras la pausa':'% of break goals after the break'},ticks:{callback:v=>v+'%'}}}}});
+ $('trackNote').innerHTML=T.trackNote(cur,D.n);
 }
 
 // ---------- GLOSSARY ----------
@@ -972,7 +1004,14 @@ function drawSurveyCounts(m){const T=L();$('surveyChartBox').style.display='bloc
  const c=[0,1,2,3].map(i=>[m['b1feel:'+i]||0,m['b2feel:'+i]||0]);
  if(surveyChart)surveyChart.destroy();Chart.defaults.color=chartColor();
  surveyChart=new Chart($('cSurvey'),{type:'bar',data:{labels:T.svFeel,datasets:[{label:T.svAfter1,data:c.map(x=>x[0]),backgroundColor:GREY,borderRadius:4},{label:T.svAfter2,data:c.map(x=>x[1]),backgroundColor:GREEN,borderRadius:4}]},
-  options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});}
+  options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+ drawPerception(m);}
+function drawPerception(m){const T=L();const el=$('perception');if(!el)return;
+ const more=(m['b1feel:0']||0)+(m['b2feel:0']||0),less=(m['b1feel:1']||0)+(m['b2feel:1']||0),noc=(m['b1feel:2']||0)+(m['b2feel:2']||0);
+ if(more+less+noc<8){el.innerHTML=T.perceptionLow;return;}
+ const noticed=more+less,morePct=noticed?Math.round(more/noticed*100):0;
+ const o1=aggBreak(G,'b1'),o2=aggBreak(G,'b2'),pre=o1.g[0]+o2.g[0],post=o1.g[1]+o2.g[1];
+ el.innerHTML=T.perception(morePct,noticed,pre,post);}
 
 // ---------- refresh on toggle ----------
 function fullRefresh(){
