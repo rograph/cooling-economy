@@ -146,6 +146,24 @@ def wbgt_for(coords, utc_date, hour):
 
 COLS = ["g_before","g_after","c_before","c_after","s_before","s_after","lc_before","lc_after","cm_before","cm_after"]
 
+def get_possession(summ, home_canon, away_canon):
+    """Pull possession % for each side from the ESPN boxscore, keyed by team name."""
+    try:
+        byname = {}
+        for t in summ.get("boxscore", {}).get("teams", []):
+            byname[nm((t.get("team") or {}).get("displayName", ""))] = t
+        def pct(t):
+            for st in (t or {}).get("statistics", []):
+                if st.get("name") == "possessionPct":
+                    try:
+                        return int(round(float(str(st.get("displayValue", "")).replace("%", ""))))
+                    except Exception:
+                        return None
+            return None
+        return pct(byname.get(home_canon)), pct(byname.get(away_canon))
+    except Exception:
+        return None, None
+
 def load_existing(con):
     rows = []
     for h, a, d in con.execute("SELECT home_team, away_team, date FROM matches"):
@@ -171,13 +189,13 @@ def upsert(con, ev):
     con.execute("""INSERT OR IGNORE INTO matches
       (match_id,date,stage,matchday,venue,home_team,away_team,kickoff_local,attendance,referee,
        breaks_occurred,break1_min,break2_min,break_confirmed,home_goals,away_goals,result,
-       temp_c_kickoff,humidity_kickoff,wbgt_kickoff,wbgt_confidence,goal_minutes,data_completeness,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?, 2,22.0,67.0,1, ?,?,?, ?,?,?, ?, ?, '+events', ?)""",
+       temp_c_kickoff,humidity_kickoff,wbgt_kickoff,wbgt_confidence,goal_minutes,poss_home,poss_away,data_completeness,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?, 2,22.0,67.0,1, ?,?,?, ?,?,?, ?, ?,?,?, '+events', ?)""",
       (mid, ev["date"], ev["stage"], None, ev["venue"], ev["home"], ev["away"], ev["ko"], None, None,
        ev["hg"], ev["ag"], "H" if ev["hg"] > ev["ag"] else "A" if ev["ag"] > ev["hg"] else "D",
        ev.get("temp"), ev.get("rh"), ev.get("wbgt"),
        "estimate (shade approx)" if ev.get("wbgt") is not None else "unavailable",
-       ev["gmin"], NOW))
+       ev["gmin"], ev.get("poss_h"), ev.get("poss_a"), NOW))
     con.execute(f"INSERT OR IGNORE INTO break_metrics (match_id,{','.join('b1_'+c for c in COLS)},{','.join('b2_'+c for c in COLS)}) VALUES (?,{','.join('?'*20)})",
                 [mid] + ev["w1"] + ev["w2"])
     con.execute("""INSERT INTO sources_log (match_id,table_ref,field,value,claim_type,confidence,source_name,source_url,retrieved_date,notes)
@@ -232,6 +250,7 @@ def main():
                   "venue": comp.get("venue", {}).get("fullName"), "ko": comp["date"][11:16],
                   "gmin": goal_str(goals), "w1": w1, "w2": w2}
             if wx: ev["temp"], ev["rh"], ev["wbgt"] = wx
+            ev["poss_h"], ev["poss_a"] = get_possession(summ, nm(home), nm(away))
             mid = upsert(con, ev)
             have.append((teamset, date_iso))
             added.append(f"{ev['home']} {ev['hg']}-{ev['ag']} {ev['away']} ({ev['stage']}, WBGT {ev.get('wbgt')})")
@@ -252,14 +271,48 @@ def main():
                         "wbgt_confidence='estimate (shade approx)' WHERE match_id=?",
                         (wx[0], wx[1], wx[2], mid))
             fixed.append(f"{mid} -> WBGT {wx[2]}")
+    # Backfill possession for matches missing it (from the ESPN boxscore)
+    sbc = {}
+    def scoreboard_for(ds):
+        if ds not in sbc:
+            try: sbc[ds] = get(f"{ESPN}/scoreboard?dates={ds}")
+            except Exception: sbc[ds] = {}
+        return sbc[ds]
+    poss_fixed = []
+    for mid, home, away, date in con.execute(
+            "SELECT match_id, home_team, away_team, date FROM matches WHERE poss_home IS NULL").fetchall():
+        want = frozenset((nm(home), nm(away)))
+        try: base = datetime.date.fromisoformat(date)
+        except Exception: base = None
+        cands = [(base + datetime.timedelta(days=k)).strftime("%Y-%m-%d") for k in (0, -1, 1)] if base else [date]
+        ev_id = None
+        for dd in cands:
+            for e in scoreboard_for(dd.replace("-", "")).get("events", []):
+                comp = e["competitions"][0]
+                if frozenset(nm(c["team"]["displayName"]) for c in comp["competitors"]) == want:
+                    ev_id = e["id"]; break
+            if ev_id: break
+        if not ev_id:
+            continue
+        try:
+            summ = get(f"{ESPN}/summary?event={ev_id}")
+            ph, pa = get_possession(summ, nm(home), nm(away))
+        except Exception:
+            continue
+        if ph is not None and pa is not None:
+            con.execute("UPDATE matches SET poss_home=?, poss_away=? WHERE match_id=?", (ph, pa, mid))
+            poss_fixed.append(f"{mid} {ph}/{pa}")
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
+    npos = con.execute("SELECT COUNT(*) FROM matches WHERE poss_home IS NOT NULL").fetchone()[0]
     con.close()
     print(f"added {len(added)} match(es); store now {n}")
     for a in added: print("  +", a)
     if fixed:
         print(f"backfilled WBGT for {len(fixed)} match(es):")
         for f2 in fixed: print("  ~", f2)
+    print(f"possession: {npos}/{n} matches now have it (backfilled {len(poss_fixed)} this run)")
+    for p in poss_fixed[:40]: print("  =", p)
     # write a flag file the workflow can read
     with open(os.environ.get("CE_ADDED_FILE", "/tmp/ce_added.txt"), "w") as f:
         f.write(str(len(added)))
