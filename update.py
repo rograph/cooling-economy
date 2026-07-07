@@ -336,6 +336,33 @@ def main():
         if ph is not None and pa is not None:
             con.execute("UPDATE matches SET poss_home=?, poss_away=? WHERE match_id=?", (ph, pa, mid))
             poss_fixed.append(f"{mid} {ph}/{pa}")
+    # Backfill penalty shootouts: knockout draws missing pen scores get them
+    # from the scoreboard's shootoutScore, so the bracket can advance a winner.
+    pen_fixed = []
+    for mid, home, away, date in con.execute(
+            "SELECT match_id, home_team, away_team, date FROM matches "
+            "WHERE stage != 'group' AND result = 'D' AND pen_home IS NULL").fetchall():
+        want = frozenset((nm(home), nm(away)))
+        try: base = datetime.date.fromisoformat(date)
+        except Exception: base = None
+        cands = [(base + datetime.timedelta(days=k)).strftime("%Y%m%d") for k in (0, -1, 1)] if base else []
+        found = False
+        for ds in cands:
+            for e in scoreboard_for(ds).get("events", []):
+                cc = e["competitions"][0]["competitors"]
+                if frozenset(nm(c["team"]["displayName"]) for c in cc) != want:
+                    continue
+                H2 = next(c for c in cc if c["homeAway"] == "home")
+                A2 = next(c for c in cc if c["homeAway"] == "away")
+                ph, pa = H2.get("shootoutScore"), A2.get("shootoutScore")
+                if ph is not None and pa is not None:
+                    if nm(H2["team"]["displayName"]) != nm(home):   # ESPN home/away flipped vs store
+                        ph, pa = pa, ph
+                    con.execute("UPDATE matches SET pen_home=?, pen_away=? WHERE match_id=?", (ph, pa, mid))
+                    pen_fixed.append(f"{mid} pens {ph}-{pa}")
+                found = True
+                break
+            if found: break
     # Normalize each match's stage to ESPN's authoritative round where we saw it
     # in the scan window; otherwise fall back to the kickoff-aware date guess
     # (round windows roll over at 07:00 UTC, so a late US kickoff dated the next
@@ -358,6 +385,7 @@ def main():
         for f2 in fixed: print("  ~", f2)
     print(f"possession: {npos}/{n} matches now have it (backfilled {len(poss_fixed)} this run)")
     for p in poss_fixed[:40]: print("  =", p)
+    for pf in pen_fixed: print("  pens:", pf)
     print(f"stage normalized on {stage_fixed} match(es)")
     # write a flag file the workflow can read
     with open(os.environ.get("CE_ADDED_FILE", "/tmp/ce_added.txt"), "w") as f:
