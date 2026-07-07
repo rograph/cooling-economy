@@ -219,7 +219,9 @@ def main():
     con = sqlite3.connect(DB)
     have = load_existing(con)
     today = datetime.datetime.utcnow().date()
-    dates = [today - datetime.timedelta(days=1), today]  # yesterday + today (UTC)
+    # Rolling window so a missed scheduled run self-heals (dedupe prevents re-adds).
+    lookback = int(os.environ.get("CE_LOOKBACK_DAYS", "14"))
+    dates = [today - datetime.timedelta(days=k) for k in range(lookback, -1, -1)]
     added = []
     for d in dates:
         ds = d.strftime("%Y%m%d")
