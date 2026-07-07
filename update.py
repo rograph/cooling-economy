@@ -48,9 +48,23 @@ def code(name):
     p = re.sub(r"[^A-Za-z ]", "", s).upper().split()
     return (p[0][:3] if len(p) == 1 else p[0][:2] + p[1][:1])[:3]
 
-def round_for_date(d):
-    """WC2026 round from the (UTC) match date. Gaps between rounds absorb
-    midnight drift. d = 'YYYY-MM-DD'."""
+def effective_date(d, ko_utc=None):
+    """ESPN's round windows roll over at 07:00 UTC, not midnight (a late US
+    kickoff lands on the next UTC date). If the kickoff is before 07:00 UTC,
+    the match belongs to the previous match day — shift the date back one day
+    before classifying. E.g. Colombia–Ghana (R32) at 01:30Z on Jul 4 must
+    classify as Jul 3."""
+    try:
+        if ko_utc and ko_utc < "07:00":
+            return (datetime.date.fromisoformat(d) - datetime.timedelta(days=1)).isoformat()
+    except Exception:
+        pass
+    return d
+
+def round_for_date(d, ko_utc=None):
+    """WC2026 round from the (UTC) match date + kickoff time. Gaps between
+    rounds absorb drift. d = 'YYYY-MM-DD'. Fallback only; prefer round_from_slug."""
+    d = effective_date(d, ko_utc)
     if d <= "2026-06-27": return "group"
     if d <= "2026-07-03": return "R32"
     if d <= "2026-07-08": return "R16"
@@ -58,6 +72,20 @@ def round_for_date(d):
     if d <= "2026-07-17": return "SF"
     if d == "2026-07-18": return "3P"
     return "F"
+
+def round_from_slug(slug, date_iso, ko_utc=None):
+    """Map ESPN's authoritative round label (season.slug) to our stage code.
+    ESPN knows the real round even for late kickoffs that cross midnight UTC,
+    so this beats the date guess. Falls back to the date if the slug is odd."""
+    s = (slug or "").lower()
+    if "round-of-32" in s or "32" in s: return "R32"
+    if "round-of-16" in s or "16" in s: return "R16"
+    if "quarter" in s: return "QF"
+    if "semi" in s: return "SF"
+    if "third" in s or "3rd" in s: return "3P"
+    if "group" in s or "1st-round" in s or "first-round" in s: return "group"
+    if s == "final" or s.endswith("final"): return "F"
+    return round_for_date(date_iso, ko_utc)
 
 def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "cooling-economy-bot"})
@@ -223,6 +251,7 @@ def main():
     lookback = int(os.environ.get("CE_LOOKBACK_DAYS", "14"))
     dates = [today - datetime.timedelta(days=k) for k in range(lookback, -1, -1)]
     added = []
+    slugmap = {}   # teamset -> authoritative stage code, from every event we see
     for d in dates:
         ds = d.strftime("%Y%m%d")
         try:
@@ -230,14 +259,16 @@ def main():
         except Exception as ex:
             print("scoreboard fetch failed", ds, ex); continue
         for e in sb.get("events", []):
-            if e.get("status", {}).get("type", {}).get("state") != "post":
-                continue
             comp = e["competitions"][0]
             H = next(c for c in comp["competitors"] if c["homeAway"] == "home")
             A = next(c for c in comp["competitors"] if c["homeAway"] == "away")
             home, away = H["team"]["displayName"], A["team"]["displayName"]
             date_iso = comp["date"][:10]
             teamset = frozenset((nm(home), nm(away)))
+            stage = round_from_slug((e.get("season") or {}).get("slug"), date_iso, comp["date"][11:16])
+            slugmap[teamset] = stage
+            if e.get("status", {}).get("type", {}).get("state") != "post":
+                continue
             if is_dup(have, teamset, date_iso):
                 continue
             try:
@@ -249,7 +280,7 @@ def main():
             hh = comp["date"][11:13]
             wx = wbgt_for(venue_coords(comp.get("venue", {}).get("fullName")), date_iso, int(hh))
             ev = {"home": nm(home), "away": nm(away), "hg": int(H["score"]), "ag": int(A["score"]),
-                  "date": date_iso, "stage": round_for_date(date_iso),
+                  "date": date_iso, "stage": stage,
                   "venue": comp.get("venue", {}).get("fullName"), "ko": comp["date"][11:16],
                   "gmin": goal_str(goals), "w1": w1, "w2": w2}
             if wx: ev["temp"], ev["rh"], ev["wbgt"] = wx
@@ -305,11 +336,15 @@ def main():
         if ph is not None and pa is not None:
             con.execute("UPDATE matches SET poss_home=?, poss_away=? WHERE match_id=?", (ph, pa, mid))
             poss_fixed.append(f"{mid} {ph}/{pa}")
-    # Normalize each match's stage to the correct round, derived from its date
+    # Normalize each match's stage to ESPN's authoritative round where we saw it
+    # in the scan window; otherwise fall back to the kickoff-aware date guess
+    # (round windows roll over at 07:00 UTC, so a late US kickoff dated the next
+    # UTC day — e.g. Colombia–Ghana R32 at 01:30Z Jul 4 — classifies correctly).
     stage_fixed = 0
-    for mid, date, stage in con.execute("SELECT match_id, date, stage FROM matches").fetchall():
-        want = round_for_date(date)
-        if stage != want and not (stage == "group" and want == "group"):
+    for mid, home, away, date, ko, stage in con.execute(
+            "SELECT match_id, home_team, away_team, date, kickoff_local, stage FROM matches").fetchall():
+        want = slugmap.get(frozenset((nm(home), nm(away)))) or round_for_date(date, ko)
+        if stage != want:
             con.execute("UPDATE matches SET stage=? WHERE match_id=?", (want, mid))
             stage_fixed += 1
     con.commit()
