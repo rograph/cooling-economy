@@ -256,7 +256,7 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
   <div class="card">
    <div class="controls">
     <div class="ctl"><label data-i18n="lbl_match"></label><select id="selMatch"></select></div>
-    <div class="ctl"><label data-i18n="lbl_stage"></label><div class="seg" id="segStage"><button data-st="all" class="on" data-i18n="st_all"></button><button data-st="group" data-i18n="st_group"></button><button data-st="ko" data-i18n="st_ko"></button></div></div>
+    <div class="ctl"><label data-i18n="lbl_stage"></label><select id="selStage"></select></div>
     <div class="ctl"><label data-i18n="lbl_heat"></label><div class="seg" id="segHeat"><button data-h="all" class="on" data-i18n="h_all"></button><button data-h="hot" data-i18n="h_hot"></button><button data-h="cool" data-i18n="h_cool"></button></div></div>
    </div>
    <div class="readbox" id="readbox"></div>
@@ -402,7 +402,8 @@ const TR={
   an_heat_s:'The "real-feel" heat on the pitch, called WBGT: air temperature, humidity, and sun rolled into one number. Around 28°C and up is tough on players.',
   heatLeg:()=>['Cooler','Warm','Hot '+tU(28,0)+'+'],
   heatNote:(avgT,thrT,hotN,coolN,n)=>`Across these ${n} games the pitch feels like about <b>${avgT}</b> on average. We count a game as <b>hot</b> when the real-feel heat is <b>${thrT} or more</b> (${hotN} games so far), and <b>cooler</b> below that (${coolN} games). That is the split the Hot / Cooler filter above uses. Real-feel heat (its proper name is WBGT) matters more than plain air temperature, because humidity and direct sun make the same temperature far harder on the body.`,
-  lbl_match:'Match',opt_all:'All matches (totals)',lbl_stage:'Stage',st_all:'All',st_group:'Group',st_ko:'Knockout',
+  lbl_match:'Match',opt_all:'All matches (totals)',lbl_stage:'Round',st_all:'All stages',st_ko:'Knockouts (all)',
+  stageLabels:{group:'Group stage',R32:'Round of 32',R16:'Round of 16',QF:'Quarterfinals',SF:'Semifinals','3P':'Third place',F:'Final'},
   lbl_heat:'Heat',h_all:'All',h_hot:'Hot 🔥',h_cool:'Cooler',
   an_breaks_h:'What changes around each break',an_breaks_s:'Only the 10 minutes right before each break versus the 10 minutes right after. Goals, cards or subs at any other time in the match are not counted here, so these numbers will not add up to the final score. For every goal, see the goal-timing chart lower down.',
   recon1:(tot,inw,mins)=>`This match had <b>${tot}</b> goal${tot===1?'':'s'}${mins.length?' (at '+mins.map(m=>m+"'").join(', ')+')':''}. This table only looks at the 10 minutes on each side of the 22' and 67' breaks, so just <b>${inw}</b> land${inw===1?'s':''} inside a window here. The rest were scored at other times. The goal-timing chart below shows all of them.`,
@@ -445,6 +446,7 @@ const TR={
   rounds:{R32:'Round of 32',R16:'Round of 16',QF:'Quarter-finals',SF:'Semi-finals',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · FIFA World Cup 2026\nDo hydration breaks change the game? ${ans}\nGoals in the 10 min before vs after the breaks: ${pre} vs ${post}, across ${n} matches.`,
   updates:[
+   ['2026-07-06','Filter by round','The round filter now lets you pick any stage on its own, Round of 32, Round of 16, quarterfinals, semis, final, and the match picker groups games by round. Every knockout match is tagged with its correct round.'],
    ['2026-07-06','Perception vs reality + a noise check','Two additions: the Verdict tab now tracks the before-vs-after gap with a 95% confidence band as matches pile up, so you can watch it hug the no-effect line. And the survey now compares what fans felt against what the data shows.'],
    ['2026-07-05','Heat vs goals','New scatter in the deeper analysis: real-feel heat against total goals, one dot per match, to see if heat alone changes scoring. Also patched a missing heat reading so every match with a known venue now has one.'],
    ['2026-07-01','More knockout games','Added Mexico 2-0 Ecuador, another hot one, so all three June 30 Round-of-32 games are in. 79 matches now, and the fan survey has a cleaner live results chart.'],
@@ -535,7 +537,8 @@ const TR={
   an_heat_s:'La sensación térmica real en la cancha, llamada WBGT: temperatura del aire, humedad y sol en un solo número. De 28°C para arriba es duro para los jugadores.',
   heatLeg:()=>['Fresco','Templado','Calor '+tU(28,0)+'+'],
   heatNote:(avgT,thrT,hotN,coolN,n)=>`En estos ${n} partidos la cancha se siente en promedio como <b>${avgT}</b>. Contamos un partido como <b>caluroso</b> cuando la sensación térmica es de <b>${thrT} o más</b> (${hotN} partidos hasta ahora), y <b>fresco</b> por debajo (${coolN} partidos). Ese es el corte que usa el filtro Calor / Fresco de arriba. La sensación térmica real (su nombre técnico es WBGT) importa más que la temperatura del aire sola, porque la humedad y el sol directo hacen que la misma temperatura pese mucho más en el cuerpo.`,
-  lbl_match:'Partido',opt_all:'Todos los partidos (totales)',lbl_stage:'Fase',st_all:'Todas',st_group:'Grupos',st_ko:'Eliminatorias',
+  lbl_match:'Partido',opt_all:'Todos los partidos (totales)',lbl_stage:'Ronda',st_all:'Todas las fases',st_ko:'Eliminatorias (todas)',
+  stageLabels:{group:'Fase de grupos',R32:'Dieciseisavos',R16:'Octavos',QF:'Cuartos',SF:'Semifinales','3P':'Tercer puesto',F:'Final'},
   lbl_heat:'Calor',h_all:'Todos',h_hot:'Calor 🔥',h_cool:'Fresco',
   an_breaks_h:'Qué cambia alrededor de cada pausa',an_breaks_s:'Solo los 10 minutos justo antes de cada pausa frente a los 10 minutos justo después. Los goles, tarjetas o cambios en cualquier otro momento del partido no se cuentan aquí, así que estos números no van a cuadrar con el marcador final. Para ver todos los goles, mira el gráfico de tiempos de gol más abajo.',
   recon1:(tot,inw,mins)=>`Este partido tuvo <b>${tot}</b> gol${tot===1?'':'es'}${mins.length?' (al '+mins.map(m=>m+"'").join(', ')+')':''}. Esta tabla solo mira los 10 minutos a cada lado de las pausas del 22' y el 67', así que solo <b>${inw}</b> ${inw===1?'cae':'caen'} dentro de una ventana aquí. El resto se marcaron en otros momentos. El gráfico de tiempos de gol de abajo los muestra todos.`,
@@ -578,6 +581,7 @@ const TR={
   rounds:{R32:'Dieciseisavos',R16:'Octavos',QF:'Cuartos',SF:'Semifinales',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · Copa del Mundo 2026\n¿Las pausas de hidratación cambian el partido? ${ans}\nGoles en los 10 min antes vs después de las pausas: ${pre} vs ${post}, en ${n} partidos.`,
   updates:[
+   ['2026-07-06','Filtrar por ronda','El filtro de ronda ahora permite elegir cada fase por separado: dieciseisavos, octavos, cuartos, semis y final, y el selector de partidos los agrupa por ronda. Cada partido de eliminatoria queda etiquetado con su ronda correcta.'],
    ['2026-07-06','Percepción vs realidad + prueba de ruido','Dos añadidos: la pestaña Veredicto ahora sigue la diferencia antes-vs-después con una banda de confianza del 95% a medida que se suman partidos, para verla pegarse a la línea de sin efecto. Y la encuesta ahora compara lo que sintieron los fans con lo que dicen los datos.'],
    ['2026-07-05','Calor vs goles','Nuevo gráfico de dispersión en el análisis profundo: sensación térmica frente al total de goles, un punto por partido, para ver si el calor por sí solo cambia el marcador. También se corrigió un dato de calor faltante, así que todo partido con estadio conocido ya lo tiene.'],
    ['2026-07-01','Más octavos','Se agregó México 2-0 Ecuador, otro con calor, así que ya están los tres partidos de octavos del 30 de junio. Ya son 79 partidos, y la encuesta tiene un gráfico de resultados en vivo más claro.'],
@@ -666,6 +670,7 @@ function selGames(){
  let gs=G;
  if(state.stage==='group')gs=gs.filter(g=>g.stage==='group');
  else if(state.stage==='ko')gs=gs.filter(g=>g.stage!=='group');
+ else if(state.stage!=='all')gs=gs.filter(g=>g.stage===state.stage);
  if(state.heat==='hot')gs=gs.filter(g=>g.wbgt>=28);
  else if(state.heat==='cool')gs=gs.filter(g=>g.wbgt<28);
  return gs;}
@@ -889,7 +894,18 @@ function makeAnalysis(){
  $('heatScatterLegend').innerHTML=T.heatScatterLeg().map((l,i)=>`<span class="hl"><span class="dot" style="background:${['#5ea0ff','#ff4d6d'][i]}"></span>${l}</span>`).join('');
  $('heatScatterNote').innerHTML=T.heatScatterNote(rr,avgG(hotG),avgG(coolG),nH);
 }
-function fillMatchSelect(){const T=L();const sel=$('selMatch');sel.innerHTML=`<option value="all">${T.opt_all}</option>`+G.map(g=>`<option value="${g.id}">${flag(g.home)} ${g.home} ${g.hg}-${g.ag} ${g.away} ${flag(g.away)} · ${g.date}</option>`).join('');sel.value=state.sel;}
+const STORDER=['group','R32','R16','QF','SF','3P','F'];
+function fillMatchSelect(){const T=L();const sel=$('selMatch');const by={};G.forEach(g=>{(by[g.stage]=by[g.stage]||[]).push(g);});
+ let html=`<option value="all">${T.opt_all}</option>`;
+ STORDER.forEach(st=>{const arr=by[st];if(!arr||!arr.length)return;
+  html+=`<optgroup label="${T.stageLabels[st]||st}">`+arr.map(g=>`<option value="${g.id}">${flag(g.home)} ${g.home} ${g.hg}-${g.ag} ${g.away} ${flag(g.away)} · ${g.date}</option>`).join('')+`</optgroup>`;});
+ sel.innerHTML=html;sel.value=state.sel;}
+function fillStageSelect(){const T=L();const sel=$('selStage');if(!sel)return;const present=new Set(G.map(g=>g.stage));
+ let html=`<option value="all">${T.st_all}</option>`;
+ if(present.has('group'))html+=`<option value="group">${T.stageLabels.group}</option>`;
+ if([...present].some(s=>s!=='group'))html+=`<option value="ko">${T.st_ko}</option>`;
+ STORDER.forEach(st=>{if(st!=='group'&&present.has(st))html+=`<option value="${st}">${T.stageLabels[st]}</option>`;});
+ sel.innerHTML=html;sel.value=state.stage;}
 
 function renderAnalysis(){
  const T=L();
@@ -1015,7 +1031,7 @@ function drawPerception(m){const T=L();const el=$('perception');if(!el)return;
 
 // ---------- refresh on toggle ----------
 function fullRefresh(){
- applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();
+ applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();fillStageSelect();
  if(distChart){distChart.destroy();histChart.destroy();xgChart.destroy();momChart.destroy();subChart.destroy();welChart.destroy();if(heatScatter)heatScatter.destroy();made.analysis=false;}
  if(state.tab==='analysis')renderAnalysis(); if(state.tab==='verdict')renderVerdict();
  if(state.tab==='bracket')renderBracket(); if(state.tab==='updates')renderUpdates();
@@ -1025,7 +1041,7 @@ function fullRefresh(){
 $('nav').querySelectorAll('button').forEach(b=>b.onclick=()=>{showTab(b.dataset.t);$('menu').classList.remove('open');$('navToggle').setAttribute('aria-expanded','false');});
 $('navToggle').onclick=()=>{const open=$('menu').classList.toggle('open');$('navToggle').setAttribute('aria-expanded',open?'true':'false');};
 $('selMatch').onchange=function(){state.sel=this.value;renderAnalysis();};
-$('segStage').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segStage').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.stage=b.dataset.st;renderAnalysis();});
+$('selStage').onchange=function(){state.stage=this.value;renderAnalysis();};
 $('segHeat').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segHeat').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.heat=b.dataset.h;renderAnalysis();});
 $('moreBtn').onclick=()=>{state.more=!state.more;$('moreWrap').style.display=state.more?'':'none';$('moreBtn').textContent=state.more?L().moreHide:L().moreShow;if(state.more&&histChart){histChart.resize();xgChart.resize();momChart.resize();}};
 $('langBtn').onclick=()=>{state.lang=state.lang==='en'?'es':'en';fullRefresh();};
@@ -1045,7 +1061,7 @@ $('submitSurvey').onclick=async()=>{const T=L();const choices=Object.keys(answer
 
 // ---------- init ----------
 document.body.classList.toggle('dark',state.theme==='dark');
-applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();armReveal();
+applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();fillStageSelect();armReveal();
 </script>
 </body></html>"""
 

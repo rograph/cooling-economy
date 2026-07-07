@@ -48,15 +48,16 @@ def code(name):
     p = re.sub(r"[^A-Za-z ]", "", s).upper().split()
     return (p[0][:3] if len(p) == 1 else p[0][:2] + p[1][:1])[:3]
 
-def stage_of(headline):
-    h = (headline or "").lower()
-    if "round of 16" in h: return "R16"
-    if "quarter" in h: return "QF"
-    if "semi" in h: return "SF"
-    if "third" in h: return "3P"
-    if "final" in h: return "F"
-    if "round of 32" in h: return "R32"
-    return "KO"
+def round_for_date(d):
+    """WC2026 round from the (UTC) match date. Gaps between rounds absorb
+    midnight drift. d = 'YYYY-MM-DD'."""
+    if d <= "2026-06-27": return "group"
+    if d <= "2026-07-03": return "R32"
+    if d <= "2026-07-08": return "R16"
+    if d <= "2026-07-13": return "QF"
+    if d <= "2026-07-17": return "SF"
+    if d == "2026-07-18": return "3P"
+    return "F"
 
 def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "cooling-economy-bot"})
@@ -246,7 +247,7 @@ def main():
             hh = comp["date"][11:13]
             wx = wbgt_for(venue_coords(comp.get("venue", {}).get("fullName")), date_iso, int(hh))
             ev = {"home": nm(home), "away": nm(away), "hg": int(H["score"]), "ag": int(A["score"]),
-                  "date": date_iso, "stage": stage_of((comp.get("notes") or [{}])[0].get("headline")),
+                  "date": date_iso, "stage": round_for_date(date_iso),
                   "venue": comp.get("venue", {}).get("fullName"), "ko": comp["date"][11:16],
                   "gmin": goal_str(goals), "w1": w1, "w2": w2}
             if wx: ev["temp"], ev["rh"], ev["wbgt"] = wx
@@ -302,6 +303,13 @@ def main():
         if ph is not None and pa is not None:
             con.execute("UPDATE matches SET poss_home=?, poss_away=? WHERE match_id=?", (ph, pa, mid))
             poss_fixed.append(f"{mid} {ph}/{pa}")
+    # Normalize each match's stage to the correct round, derived from its date
+    stage_fixed = 0
+    for mid, date, stage in con.execute("SELECT match_id, date, stage FROM matches").fetchall():
+        want = round_for_date(date)
+        if stage != want and not (stage == "group" and want == "group"):
+            con.execute("UPDATE matches SET stage=? WHERE match_id=?", (want, mid))
+            stage_fixed += 1
     con.commit()
     n = con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
     npos = con.execute("SELECT COUNT(*) FROM matches WHERE poss_home IS NOT NULL").fetchone()[0]
@@ -313,6 +321,7 @@ def main():
         for f2 in fixed: print("  ~", f2)
     print(f"possession: {npos}/{n} matches now have it (backfilled {len(poss_fixed)} this run)")
     for p in poss_fixed[:40]: print("  =", p)
+    print(f"stage normalized on {stage_fixed} match(es)")
     # write a flag file the workflow can read
     with open(os.environ.get("CE_ADDED_FILE", "/tmp/ce_added.txt"), "w") as f:
         f.write(str(len(added)))
