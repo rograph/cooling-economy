@@ -1063,11 +1063,21 @@ function makeAnalysis(){
  $('heatScatterNote').innerHTML=T.heatScatterNote(rr,avgG(hotG),avgG(coolG),nH);
 }
 const STORDER=['group','R32','R16','QF','SF','3P','F'];
-function fillMatchSelect(){const T=L();const sel=$('selMatch');const by={};G.forEach(g=>{(by[g.stage]=by[g.stage]||[]).push(g);});
+function matchesForStage(st){
+ if(!st||st==='all')return G;
+ if(st==='group')return G.filter(g=>g.stage==='group');
+ if(st==='ko')return G.filter(g=>g.stage!=='group');
+ return G.filter(g=>g.stage===st);}
+function fillMatchSelect(stageFilter){const T=L();const sel=$('selMatch');
+ const pool=matchesForStage(stageFilter===undefined?state.stage:stageFilter);
+ const by={};pool.forEach(g=>{(by[g.stage]=by[g.stage]||[]).push(g);});
  let html=`<option value="all">${T.opt_all}</option>`;
  STORDER.forEach(st=>{const arr=by[st];if(!arr||!arr.length)return;
   html+=`<optgroup label="${T.stageLabels[st]||st}">`+arr.map(g=>`<option value="${g.id}">${flag(g.home)} ${g.home} ${g.hg}-${g.ag} ${g.away} ${flag(g.away)} · ${g.date}</option>`).join('')+`</optgroup>`;});
- sel.innerHTML=html;sel.value=state.sel;}
+ sel.innerHTML=html;
+ const keep=pool.some(g=>g.id===state.sel);
+ if(!keep)state.sel='all';
+ sel.value=state.sel;}
 function fillStageSelect(){const T=L();const sel=$('selStage');if(!sel)return;const present=new Set(G.map(g=>g.stage));
  let html=`<option value="all">${T.st_all}</option>`;
  if(present.has('group'))html+=`<option value="group">${T.stageLabels.group}</option>`;
@@ -1211,7 +1221,7 @@ function fullRefresh(){
 $('nav').querySelectorAll('button').forEach(b=>b.onclick=()=>{showTab(b.dataset.t);$('menu').classList.remove('open');$('navToggle').setAttribute('aria-expanded','false');});
 $('navToggle').onclick=()=>{const open=$('menu').classList.toggle('open');$('navToggle').setAttribute('aria-expanded',open?'true':'false');};
 $('selMatch').onchange=function(){state.sel=this.value;renderAnalysis();};
-$('selStage').onchange=function(){state.stage=this.value;renderAnalysis();};
+$('selStage').onchange=function(){state.stage=this.value;fillMatchSelect(state.stage);renderAnalysis();};
 $('segHeat').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segHeat').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.heat=b.dataset.h;renderAnalysis();});
 $('segScenario').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segScenario').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.scenario=b.dataset.sc;renderBroadcast();});
 $('moreBtn').onclick=()=>{state.more=!state.more;$('moreWrap').style.display=state.more?'':'none';$('moreBtn').textContent=state.more?L().moreHide:L().moreShow;if(state.more&&histChart){histChart.resize();xgChart.resize();momChart.resize();}};
