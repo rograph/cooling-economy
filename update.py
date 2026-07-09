@@ -48,9 +48,23 @@ def code(name):
     p = re.sub(r"[^A-Za-z ]", "", s).upper().split()
     return (p[0][:3] if len(p) == 1 else p[0][:2] + p[1][:1])[:3]
 
-def round_for_date(d):
-    """WC2026 round from the (UTC) match date. Gaps between rounds absorb
-    midnight drift. d = 'YYYY-MM-DD'. Fallback only; prefer round_from_slug."""
+def effective_date(d, ko_utc=None):
+    """ESPN's round windows roll over at 07:00 UTC, not midnight (a late US
+    kickoff lands on the next UTC date). If the kickoff is before 07:00 UTC,
+    the match belongs to the previous match day — shift the date back one day
+    before classifying. E.g. Colombia–Ghana (R32) at 01:30Z on Jul 4 must
+    classify as Jul 3."""
+    try:
+        if ko_utc and ko_utc < "07:00":
+            return (datetime.date.fromisoformat(d) - datetime.timedelta(days=1)).isoformat()
+    except Exception:
+        pass
+    return d
+
+def round_for_date(d, ko_utc=None):
+    """WC2026 round from the (UTC) match date + kickoff time. Gaps between
+    rounds absorb drift. d = 'YYYY-MM-DD'. Fallback only; prefer round_from_slug."""
+    d = effective_date(d, ko_utc)
     if d <= "2026-06-27": return "group"
     if d <= "2026-07-03": return "R32"
     if d <= "2026-07-08": return "R16"
@@ -59,7 +73,7 @@ def round_for_date(d):
     if d == "2026-07-18": return "3P"
     return "F"
 
-def round_from_slug(slug, date_iso):
+def round_from_slug(slug, date_iso, ko_utc=None):
     """Map ESPN's authoritative round label (season.slug) to our stage code.
     ESPN knows the real round even for late kickoffs that cross midnight UTC,
     so this beats the date guess. Falls back to the date if the slug is odd."""
@@ -71,7 +85,7 @@ def round_from_slug(slug, date_iso):
     if "third" in s or "3rd" in s: return "3P"
     if "group" in s or "1st-round" in s or "first-round" in s: return "group"
     if s == "final" or s.endswith("final"): return "F"
-    return round_for_date(date_iso)
+    return round_for_date(date_iso, ko_utc)
 
 def get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "cooling-economy-bot"})
@@ -251,7 +265,7 @@ def main():
             home, away = H["team"]["displayName"], A["team"]["displayName"]
             date_iso = comp["date"][:10]
             teamset = frozenset((nm(home), nm(away)))
-            stage = round_from_slug((e.get("season") or {}).get("slug"), date_iso)
+            stage = round_from_slug((e.get("season") or {}).get("slug"), date_iso, comp["date"][11:16])
             slugmap[teamset] = stage
             if e.get("status", {}).get("type", {}).get("state") != "post":
                 continue
@@ -322,14 +336,41 @@ def main():
         if ph is not None and pa is not None:
             con.execute("UPDATE matches SET poss_home=?, poss_away=? WHERE match_id=?", (ph, pa, mid))
             poss_fixed.append(f"{mid} {ph}/{pa}")
+    # Backfill penalty shootouts: knockout draws missing pen scores get them
+    # from the scoreboard's shootoutScore, so the bracket can advance a winner.
+    pen_fixed = []
+    for mid, home, away, date in con.execute(
+            "SELECT match_id, home_team, away_team, date FROM matches "
+            "WHERE stage != 'group' AND result = 'D' AND pen_home IS NULL").fetchall():
+        want = frozenset((nm(home), nm(away)))
+        try: base = datetime.date.fromisoformat(date)
+        except Exception: base = None
+        cands = [(base + datetime.timedelta(days=k)).strftime("%Y%m%d") for k in (0, -1, 1)] if base else []
+        found = False
+        for ds in cands:
+            for e in scoreboard_for(ds).get("events", []):
+                cc = e["competitions"][0]["competitors"]
+                if frozenset(nm(c["team"]["displayName"]) for c in cc) != want:
+                    continue
+                H2 = next(c for c in cc if c["homeAway"] == "home")
+                A2 = next(c for c in cc if c["homeAway"] == "away")
+                ph, pa = H2.get("shootoutScore"), A2.get("shootoutScore")
+                if ph is not None and pa is not None:
+                    if nm(H2["team"]["displayName"]) != nm(home):   # ESPN home/away flipped vs store
+                        ph, pa = pa, ph
+                    con.execute("UPDATE matches SET pen_home=?, pen_away=? WHERE match_id=?", (ph, pa, mid))
+                    pen_fixed.append(f"{mid} pens {ph}-{pa}")
+                found = True
+                break
+            if found: break
     # Normalize each match's stage to ESPN's authoritative round where we saw it
-    # in the scan window; otherwise fall back to the date-based guess. This
-    # corrects late kickoffs that cross midnight UTC (e.g. an R32 game dated the
-    # next day that the date rule would call R16).
+    # in the scan window; otherwise fall back to the kickoff-aware date guess
+    # (round windows roll over at 07:00 UTC, so a late US kickoff dated the next
+    # UTC day — e.g. Colombia–Ghana R32 at 01:30Z Jul 4 — classifies correctly).
     stage_fixed = 0
-    for mid, home, away, date, stage in con.execute(
-            "SELECT match_id, home_team, away_team, date, stage FROM matches").fetchall():
-        want = slugmap.get(frozenset((nm(home), nm(away)))) or round_for_date(date)
+    for mid, home, away, date, ko, stage in con.execute(
+            "SELECT match_id, home_team, away_team, date, kickoff_local, stage FROM matches").fetchall():
+        want = slugmap.get(frozenset((nm(home), nm(away)))) or round_for_date(date, ko)
         if stage != want:
             con.execute("UPDATE matches SET stage=? WHERE match_id=?", (want, mid))
             stage_fixed += 1
@@ -344,6 +385,7 @@ def main():
         for f2 in fixed: print("  ~", f2)
     print(f"possession: {npos}/{n} matches now have it (backfilled {len(poss_fixed)} this run)")
     for p in poss_fixed[:40]: print("  =", p)
+    for pf in pen_fixed: print("  pens:", pf)
     print(f"stage normalized on {stage_fixed} match(es)")
     # write a flag file the workflow can read
     with open(os.environ.get("CE_ADDED_FILE", "/tmp/ce_added.txt"), "w") as f:

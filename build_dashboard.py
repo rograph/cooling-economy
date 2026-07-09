@@ -5,6 +5,7 @@ Tabs: Home / Analysis / Verdict / Glossary / Survey. Re-run after each match.
 Charts via Chart.js CDN; font via Google Fonts.
 """
 import sqlite3, os, json, datetime
+import track_b_model as tb
 
 DB  = os.environ.get("CE_DB",  "/tmp/cooling_economy.db")
 OUT = os.environ.get("CE_OUT", "/tmp/index.html")
@@ -38,6 +39,38 @@ for r in rows:
        "mom":mom.get(r["match_id"]),
        "pen":[r["pen_home"],r["pen_away"]] if r["pen_home"] is not None else None}
     games.append(g)
+brows = con.execute("""
+ SELECT b.match_id,b.scenario,b.est_revenue_match,b.audience,b.audience_source,b.confidence,
+        m.stage,m.home_team,m.away_team,m.date
+ FROM broadcast b JOIN matches m ON b.match_id=m.match_id
+ WHERE b.market='USA' ORDER BY m.rowid""").fetchall()
+bc_by_match = {}
+for r in brows:
+    e = bc_by_match.setdefault(r["match_id"], {
+        "id": r["match_id"], "stage": r["stage"], "home": r["home_team"], "away": r["away_team"],
+        "date": r["date"], "tier": tb.tier(r["home_team"], r["away_team"]),
+        "rev": {}, "audience": r["audience"], "audSrc": r["audience_source"], "conf": r["confidence"]})
+    e["rev"][r["scenario"]] = r["est_revenue_match"]
+bgames = list(bc_by_match.values())
+bTot = {"low": 0, "base": 0, "high": 0}
+byStage, byTier = {}, {}
+for g in bgames:
+    byStage.setdefault(g["stage"], {"low": 0, "base": 0, "high": 0, "n": 0})
+    byTier.setdefault(g["tier"], {"low": 0, "base": 0, "high": 0, "n": 0})
+    byStage[g["stage"]]["n"] += 1
+    byTier[g["tier"]]["n"] += 1
+    for sc in ("low", "base", "high"):
+        v = g["rev"].get(sc, 0) or 0
+        bTot[sc] += v
+        byStage[g["stage"]][sc] += v
+        byTier[g["tier"]][sc] += v
+bRemaining = {"low": 0, "base": 0, "high": 0}
+for st, cnt in (("QF", 4), ("SF", 2), ("3P", 1), ("F", 1)):
+    band = tb.stage_band(st)
+    for sc in ("low", "base", "high"):
+        bRemaining[sc] += cnt * 2 * tb.SPOTS[sc] * tb.PRICE[band]["marquee"][sc]
+BROADCAST = {"games": bgames, "total": bTot, "byStage": byStage, "byTier": byTier,
+             "remaining": bRemaining, "incremental": tb.INCREMENTAL}
 con.close()
 
 BASE={"2018":{"buckets":[3,5,5,6,6,1,8,7,3,9,10,7,6,5,10,5,1,9,16],"w":[10,8,13,14],"tot":122},
@@ -54,7 +87,7 @@ WELFARE={"n":76,"total":191,"perMatch":2.5,"latePct":36,
          "buckets":[5,1,10,6,9,3,5,14,9,13,7,17,15,8,8,9,18,14,20]}
 N=len(games)
 DATA={"updated":datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),"n":N,
-      "games":games,"base":BASE,"xgwin":XGWIN,"momagg":MOMAGG,"subagg":SUBAGG,"welfare":WELFARE}
+      "games":games,"base":BASE,"xgwin":XGWIN,"momagg":MOMAGG,"subagg":SUBAGG,"welfare":WELFARE,"broadcast":BROADCAST}
 
 HTML=r"""<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -117,6 +150,10 @@ h1,h2,h3,.disp{font-weight:900;letter-spacing:-.02em;line-height:1.05}
 }
 .wrap{max-width:1080px;margin:0 auto;padding:24px 18px 60px}
 .tab{display:none}.tab.on{display:block;animation:f .25s ease}
+.prose{color:var(--ink);font-size:15px;line-height:1.62;max-width:760px}
+.prose h4{font-size:15px;font-weight:800;color:var(--navy);margin:18px 0 5px}
+body.dark .prose h4{color:var(--gold)}
+.prose p{margin:0 0 10px}.prose b{font-weight:800}
 @keyframes f{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;box-shadow:0 4px 18px rgba(16,26,48,.05);margin-bottom:18px}
 .eyebrow{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)}
@@ -216,10 +253,12 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
     <button data-t="home" class="on" data-i18n="nav_home"></button>
     <button data-t="analysis" data-i18n="nav_analysis"></button>
     <button data-t="verdict" data-i18n="nav_verdict"></button>
+    <button data-t="broadcast" data-i18n="nav_broadcast"></button>
     <button data-t="bracket" data-i18n="nav_bracket"></button>
     <button data-t="glossary" data-i18n="nav_glossary"></button>
     <button data-t="survey" data-i18n="nav_survey"></button>
     <button data-t="updates" data-i18n="nav_updates"></button>
+    <button data-t="about" data-i18n="nav_about"></button>
    </div>
    <div class="tg"><button id="unitBtn" title="units">°F</button><button id="themeBtn" title="theme">☾</button><button id="langBtn" class="lang">ES</button></div>
   </div>
@@ -339,6 +378,39 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
   </div>
  </div>
 
+ <div class="tab" id="tab-broadcast">
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_title"></div><div class="sect-s" data-i18n="bc_sub"></div>
+   <div class="seg" id="segScenario">
+    <button data-sc="low" data-i18n="sc_low"></button>
+    <button data-sc="base" class="on" data-i18n="sc_base"></button>
+    <button data-sc="high" data-i18n="sc_high"></button>
+   </div>
+   <div class="kgrid" id="bcKpis" style="margin-top:14px"></div>
+   <div class="banner" id="bcBanner" style="margin-top:12px"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_stage_h"></div><div class="sect-s" data-i18n="bc_stage_s"></div>
+   <div class="chartbox sm"><canvas id="cBcStage"></canvas></div>
+   <div class="note" id="bcStageNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_tier_h"></div><div class="sect-s" data-i18n="bc_tier_s"></div>
+   <div id="bcTierTable"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_scatter_h"></div><div class="sect-s" data-i18n="bc_scatter_s"></div>
+   <div class="chartbox"><canvas id="cBcScatter"></canvas></div>
+   <div class="heatlegend" id="bcScatterLegend"></div>
+   <div class="note" id="bcScatterNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_proj_h"></div><div class="sect-s" data-i18n="bc_proj_s"></div>
+   <div class="kgrid" id="bcProjKpis" style="grid-template-columns:repeat(3,1fr)"></div>
+   <div class="note" data-i18n="bc_caveat"></div>
+  </div>
+ </div>
+
  <div class="tab" id="tab-bracket">
   <div class="card">
    <div class="sect-h" data-i18n="br_title"></div><div class="sect-s" data-i18n="br_sub"></div>
@@ -357,6 +429,14 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
   <div class="card">
    <div class="sect-h" data-i18n="gl_title"></div><div class="sect-s" data-i18n="gl_sub"></div>
    <div id="glossList"></div>
+  </div>
+ </div>
+
+ <div class="tab" id="tab-about">
+  <div class="card">
+   <div class="sect-h" data-i18n="about_title"></div><div class="sect-s" data-i18n="about_sub"></div>
+   <div class="prose" id="aboutBody" data-i18n="about_body"></div>
+   <div class="foot" style="margin-top:14px">Built by Rodolfo López · <a href="__LINKEDIN__" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">LinkedIn ↗</a> · <a href="https://rodolfo.app" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">rodolfo.app ↗</a></div>
   </div>
  </div>
 
@@ -379,11 +459,11 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
 const D=__DATA__; const G=D.games;
 const $=id=>document.getElementById(id);
 const RED='#c0392b',GREEN='#15924a',GREY='#94a3b8',GOLD='#e7b53c',NAVY='#0a1f44',VIOLET='#6c4bd1';
-let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'light',unit:'c',more:false};
+let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'light',unit:'c',more:false,scenario:'base'};
 function toF(c){return c*9/5+32;}
 function tU(c,dec){dec=(dec==null?0:dec);c=Number(c);return state.unit==='f'?(toF(c).toFixed(dec)+'°F'):(c.toFixed(dec)+'°C');}
 let made={analysis:false};
-let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart,trackChart;
+let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart,trackChart,bcStageChart,bcScatter;
 const U=D.updated;
 
 // ---------- i18n ----------
@@ -438,7 +518,31 @@ const TR={
   sv_title:'Did the breaks change how the game felt?',sv_sub:'Vote once and watch how everyone answered, live. Results are shared across all visitors and update as people vote.',
   sv_submit:'Submit response',sv_export:'Export CSV',
   sv_note:'Answers are pooled anonymously across everyone who visits, and the chart updates live. Counts only, no names or comments are stored. One vote per browser.',
-  nav_bracket:'Bracket',nav_updates:'Updates',
+  nav_broadcast:'Broadcast',
+  bc_title:'What the breaks are worth in ad money',
+  bc_sub:'Every hydration break is also about two extra minutes of commercial airtime. This models what that airtime is worth on US television (Fox), from published spot-price ranges, with a transparent low / base / high calculation \u2014 not invented numbers.',
+  sc_low:'Low',sc_base:'Base',sc_high:'High',
+  bcKTotal:'\ud83d\udcb0 Revenue to date',bcKIncr:'\ud83d\udcc8 Incremental',bcKPerMatch:'\u26bd Per match',bcKMatches:'\ud83c\udfdf\ufe0f Matches priced',
+  bcBanner:(n)=>`<b>US/Fox only, for now.</b> ${n} matches priced. Telemundo (Spanish-language US), UK, Brazil and other markets are not modeled yet \u2014 adding them would raise the global total materially. Spot prices are trade-press ranges (HITC, Hollywood Reporter, Front Office Sports), not Fox's audited actuals.`,
+  bc_stage_h:'Value rises with the stage',bc_stage_s:'Knockout matches carry higher spot prices than the group stage, from cited trade-press ranges, not a flat extrapolation.',
+  bcStageNote:'Group-stage spots run about $200k\u2013$400k for a 30-second slot. Knockout spots ($300k\u2013$2M, per Front Office Sports and Awful Announcing on the USMNT\'s run) push the per-match total up sharply once the bracket tightens.',
+  bc_tier_h:'Which matches capture the value',bc_tier_s:'Matches are tagged USA (either team is the United States), marquee (a historically major team plays), or other. The tier drives both the spot price and the audience estimate.',
+  bcTierCol1:'Tier',bcTierCol2:'Matches',bcTierCol3:'Revenue (this scenario)',bcTierCol4:'Avg / match',
+  tierLabels:{us:'\ud83c\uddfa\ud83c\uddf8 USA matches',marquee:'\u2b50 Marquee',other:'Other'},
+  bc_scatter_h:'Revenue scales with audience',bc_scatter_s:'One dot per match: reported or estimated audience against modeled ad revenue. Three matches use real Nielsen figures; the rest use a tiered estimate, labeled as such in the underlying data.',
+  bcScatterX:'audience (millions)',bcScatterY:'ad revenue per match ($M)',
+  bcTierLegend:['Other','Marquee','USA'],
+  bcScatterNote:'The USA-Belgium Round of 16 match (30M average viewers, Hollywood Reporter) and Mexico-England (21.74M, Sports Media Watch) sit well above the tiered estimate used for other matches \u2014 a reminder that the marquee/other tiers are still a stand-in for real per-match ratings, not a measurement.',
+  bc_proj_h:'Projected full tournament (104 matches)',bc_proj_s:'Matches played so far plus the 8 fixtures still to come (4 quarterfinals, 2 semifinals, 3rd place, final), the remaining ones assumed at a marquee tier since no matchups are confirmed yet.',
+  bc_caveat:'<b>Read this like Track A: estimate, not measurement.</b> Spot prices are trade-press ranges; three matches use reported Nielsen audiences, everything else is a tiered estimate. About 90% of this revenue is treated as incremental (breaks create airtime a sport with no natural stoppages would not otherwise have) \u2014 that 90% is an assumption, not a sourced figure. Models US English-language broadcast (Fox) only; other markets are not yet included in the total.',
+  nav_bracket:'Bracket',nav_updates:'Updates',nav_about:'About',
+  about_title:'About this project',about_sub:'What it measures, where the data comes from, and what it cannot tell you.',
+  about_body:`<h4>The question</h4><p>At the 2026 World Cup, play stops twice in most matches for a short cooling break, once in the first half and once in the second, so players can drink and cool down in the heat. This project asks a simple thing: do those pauses change the football? It tracks goals, chance quality, possession, momentum, cards and substitutions in the minutes around each break, and keeps a running verdict that updates as matches are played.</p>
+<h4>The rule being tested</h4><p>The study treats each match as having two breaks of roughly three minutes, near the 22nd and 67th minute. For every match it compares the <b>10 minutes before</b> each break with the <b>10 minutes after</b>. Break timing shifts a little by match and by how hot it is, so read the windows as close approximations, not stopwatch-exact moments.</p>
+<h4>Where the data comes from</h4><p>Match events (goals, cards, substitutions, possession and their timings) come from ESPN's public football API. Real-feel heat, whose proper name is WBGT, is estimated from Open-Meteo hourly temperature and humidity at each stadium's location and kickoff hour, using a standard shade formula. Historical no-break baselines come from the 2018 and 2022 World Cups, neither of which used routine cooling breaks. Every figure on the dashboard is either measured from these feeds or clearly labeled as an estimate.</p>
+<h4>How the comparison works</h4><p>Three comparisons run side by side. Before versus after each break within the same match, which cancels out how good the teams are. Hot games versus cooler ones, to separate a break effect from a plain heat effect. And 2026 with breaks versus 2018 and 2022 without them. The Verdict tab also tracks the before-versus-after gap with a 95% confidence band, so you can watch it settle as the sample grows.</p>
+<h4>What it cannot tell you</h4><p>This is observational, not a controlled experiment. Heat and breaks travel together, so no single match can fully separate them. Early in the tournament the samples are small and any gap should be read lightly. WBGT here is a location estimate, not a sensor on the pitch. And event data can miss the odd detail. Where a number is thin or uncertain, the dashboard says so rather than overstating it.</p>
+<h4>How it stays current</h4><p>An automated job checks for newly finished matches, pulls their events and weather, appends them to a growing store, recomputes every panel and republishes the site. The date at the top of the page shows when it last refreshed. Nothing is entered by hand, so the verdict you see is the one the current data supports.</p>`,
   br_title:'Knockout bracket',br_sub:'The road to the final. Results fill in as the knockout rounds are played.',
   up_title:'Update log',up_sub:'What has changed in this study and dashboard, newest first.',
   share:'Copy the verdict',shareDone:'Copied. Paste it anywhere.',
@@ -446,6 +550,7 @@ const TR={
   rounds:{R32:'Round of 32',R16:'Round of 16',QF:'Quarter-finals',SF:'Semi-finals',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · FIFA World Cup 2026\nDo hydration breaks change the game? ${ans}\nGoals in the 10 min before vs after the breaks: ${pre} vs ${post}, across ${n} matches.`,
   updates:[
+   ['2026-07-07','About page + exact rounds','Added an About page laying out the data sources, method and honest limits in plain language. Round labels now come straight from the official round tag, so a late kickoff that rolls past midnight no longer lands in the wrong round.'],
    ['2026-07-06','Filter by round','The round filter now lets you pick any stage on its own, Round of 32, Round of 16, quarterfinals, semis, final, and the match picker groups games by round. Every knockout match is tagged with its correct round.'],
    ['2026-07-06','Perception vs reality + a noise check','Two additions: the Verdict tab now tracks the before-vs-after gap with a 95% confidence band as matches pile up, so you can watch it hug the no-effect line. And the survey now compares what fans felt against what the data shows.'],
    ['2026-07-05','Heat vs goals','New scatter in the deeper analysis: real-feel heat against total goals, one dot per match, to see if heat alone changes scoring. Also patched a missing heat reading so every match with a known venue now has one.'],
@@ -573,7 +678,31 @@ const TR={
   sv_title:'¿Las pausas cambiaron cómo se sintió el partido?',sv_sub:'Vota una vez y mira cómo respondió todo el mundo, en vivo. Los resultados se comparten entre todos y se actualizan a medida que la gente vota.',
   sv_submit:'Enviar respuesta',sv_export:'Exportar CSV',
   sv_note:'Las respuestas se juntan de forma anónima entre todos los que visitan, y el gráfico se actualiza en vivo. Solo conteos, no se guardan nombres ni comentarios. Un voto por navegador.',
-  nav_bracket:'Llaves',nav_updates:'Novedades',
+  nav_broadcast:'Publicidad',
+  bc_title:'Cu\u00e1nto valen las pausas en plata de publicidad',
+  bc_sub:'Cada pausa de hidrataci\u00f3n es tambi\u00e9n cerca de dos minutos extra de tiempo comercial. Esto modela cu\u00e1nto vale ese tiempo en la televisi\u00f3n de EE. UU. (Fox), con rangos de precio publicados y un c\u00e1lculo transparente de bajo / base / alto \u2014 no cifras inventadas.',
+  sc_low:'Bajo',sc_base:'Base',sc_high:'Alto',
+  bcKTotal:'\ud83d\udcb0 Ingresos hasta ahora',bcKIncr:'\ud83d\udcc8 Incremental',bcKPerMatch:'\u26bd Por partido',bcKMatches:'\ud83c\udfdf\ufe0f Partidos valorados',
+  bcBanner:(n)=>`<b>Solo US/Fox, por ahora.</b> ${n} partidos valorados. Telemundo (espa\u00f1ol en EE. UU.), Reino Unido, Brasil y otros mercados a\u00fan no est\u00e1n modelados \u2014 agregarlos subir\u00eda bastante el total global. Los precios son rangos de prensa especializada (HITC, Hollywood Reporter, Front Office Sports), no cifras auditadas de Fox.`,
+  bc_stage_h:'El valor sube con la fase',bc_stage_s:'Los partidos de eliminatoria tienen precios de tanda m\u00e1s altos que la fase de grupos, seg\u00fan rangos citados de prensa especializada, no una extrapolaci\u00f3n plana.',
+  bcStageNote:'Las tandas de la fase de grupos rondan $200k\u2013$400k por 30 segundos. Las de eliminatoria ($300k\u2013$2M, seg\u00fan Front Office Sports y Awful Announcing sobre la carrera del equipo de EE. UU.) suben fuerte el total por partido a medida que se cierra el cuadro.',
+  bc_tier_h:'Qu\u00e9 partidos capturan el valor',bc_tier_s:'Los partidos se etiquetan como EE. UU. (juega ese equipo), marquee (juega un equipo hist\u00f3ricamente grande) u otro. El nivel define tanto el precio de tanda como el estimado de audiencia.',
+  bcTierCol1:'Nivel',bcTierCol2:'Partidos',bcTierCol3:'Ingresos (este escenario)',bcTierCol4:'Prom. / partido',
+  tierLabels:{us:'\ud83c\uddfa\ud83c\uddf8 Partidos de EE. UU.',marquee:'\u2b50 Marquee',other:'Otros'},
+  bc_scatter_h:'Los ingresos suben con la audiencia',bc_scatter_s:'Un punto por partido: audiencia reportada o estimada frente a los ingresos publicitarios modelados. Tres partidos usan cifras reales de Nielsen; el resto usa un estimado por nivel, marcado como tal en los datos.',
+  bcScatterX:'audiencia (millones)',bcScatterY:'ingresos por partido ($M)',
+  bcTierLegend:['Otros','Marquee','EE. UU.'],
+  bcScatterNote:'El partido de octavos EE. UU.-B\u00e9lgica (30M de espectadores promedio, Hollywood Reporter) y M\u00e9xico-Inglaterra (21.74M, Sports Media Watch) quedan muy por encima del estimado por nivel usado para el resto \u2014 un recordatorio de que los niveles marquee/otro siguen siendo un sustituto de un rating real por partido, no una medici\u00f3n.',
+  bc_proj_h:'Proyecci\u00f3n del torneo completo (104 partidos)',bc_proj_s:'Los partidos jugados hasta ahora m\u00e1s los 8 que faltan (4 cuartos, 2 semifinales, tercer puesto, final), asumiendo nivel marquee para los que faltan porque a\u00fan no hay cruces confirmados.',
+  bc_caveat:'<b>Ley\u00e9ndolo como el Track A: estimaci\u00f3n, no medici\u00f3n.</b> Los precios de tanda son rangos de prensa especializada; tres partidos usan audiencias reales de Nielsen, el resto usa un estimado por nivel. Cerca del 90% de estos ingresos se trata como incremental (las pausas crean tiempo al aire que un deporte sin detenciones naturales no tendr\u00eda de otra forma) \u2014 ese 90% es un supuesto, no una cifra con fuente. Modela solo la transmisi\u00f3n en ingl\u00e9s de EE. UU. (Fox); otros mercados a\u00fan no est\u00e1n en el total.',
+  nav_bracket:'Llaves',nav_updates:'Novedades',nav_about:'Acerca de',
+  about_title:'Sobre este proyecto',about_sub:'Qué mide, de dónde salen los datos y qué no puede decirte.',
+  about_body:`<h4>La pregunta</h4><p>En el Mundial 2026, en la mayoría de los partidos el juego se detiene dos veces para una pausa de hidratación corta, una en cada tiempo, para que los jugadores tomen agua y se refresquen con el calor. Este proyecto plantea algo sencillo: ¿esas pausas cambian el fútbol? Sigue los goles, la calidad de las ocasiones, la posesión, el momentum, las tarjetas y los cambios en los minutos alrededor de cada pausa, y mantiene un veredicto que se actualiza a medida que se juegan los partidos.</p>
+<h4>La regla que se pone a prueba</h4><p>El estudio asume que cada partido tiene dos pausas de unos tres minutos, cerca del minuto 22 y del 67. Para cada partido compara los <b>10 minutos antes</b> de cada pausa con los <b>10 minutos después</b>. El momento exacto varía un poco según el partido y el calor, así que lee las ventanas como aproximaciones cercanas, no como instantes de cronómetro.</p>
+<h4>De dónde salen los datos</h4><p>Los eventos del partido (goles, tarjetas, cambios, posesión y sus tiempos) vienen de la API pública de fútbol de ESPN. El calor de sensación real, cuyo nombre técnico es WBGT, se estima con la temperatura y humedad por hora de Open-Meteo en la ubicación de cada estadio y la hora del saque, usando una fórmula estándar de sombra. Las referencias sin pausas vienen de los Mundiales 2018 y 2022, que no usaron pausas de hidratación de rutina. Cada cifra del tablero está medida de estas fuentes o marcada con claridad como estimación.</p>
+<h4>Cómo funciona la comparación</h4><p>Corren tres comparaciones en paralelo. Antes contra después de cada pausa dentro del mismo partido, lo que cancela cuán buenos son los equipos. Partidos calurosos contra partidos más frescos, para separar un efecto de la pausa de un simple efecto del calor. Y 2026 con pausas contra 2018 y 2022 sin ellas. La pestaña Veredicto también sigue la diferencia antes-después con una banda de confianza del 95%, para que veas cómo se asienta a medida que crece la muestra.</p>
+<h4>Qué no puede decirte</h4><p>Esto es observacional, no un experimento controlado. El calor y las pausas van juntos, así que ningún partido por sí solo los separa del todo. Al inicio del torneo las muestras son pequeñas y cualquier diferencia debe leerse con cautela. El WBGT aquí es una estimación por ubicación, no un sensor en la cancha. Y los datos de eventos pueden omitir algún detalle. Cuando un número es débil o incierto, el tablero lo dice en vez de exagerarlo.</p>
+<h4>Cómo se mantiene al día</h4><p>Un proceso automático busca partidos recién terminados, trae sus eventos y el clima, los suma a un registro que crece, recalcula cada panel y vuelve a publicar el sitio. La fecha en la parte superior indica cuándo se actualizó por última vez. Nada se ingresa a mano, así que el veredicto que ves es el que sostienen los datos actuales.</p>`,
   br_title:'Llave de eliminatorias',br_sub:'El camino a la final. Los resultados se llenan a medida que se juegan las rondas.',
   up_title:'Registro de cambios',up_sub:'Qué ha cambiado en este estudio y tablero, lo más nuevo primero.',
   share:'Copiar el veredicto',shareDone:'Copiado. Pégalo donde quieras.',
@@ -581,6 +710,7 @@ const TR={
   rounds:{R32:'Dieciseisavos',R16:'Octavos',QF:'Cuartos',SF:'Semifinales',F:'Final'},
   shareText:(ans,pre,post,n)=>`Cooling Economy · Copa del Mundo 2026\n¿Las pausas de hidratación cambian el partido? ${ans}\nGoles en los 10 min antes vs después de las pausas: ${pre} vs ${post}, en ${n} partidos.`,
   updates:[
+   ['2026-07-07','Página Acerca de + rondas exactas','Se agregó una página Acerca de que explica en lenguaje simple las fuentes de datos, el método y los límites honestos. Las rondas ahora vienen directo de la etiqueta oficial, así que un partido que arranca tarde y cruza la medianoche ya no cae en la ronda equivocada.'],
    ['2026-07-06','Filtrar por ronda','El filtro de ronda ahora permite elegir cada fase por separado: dieciseisavos, octavos, cuartos, semis y final, y el selector de partidos los agrupa por ronda. Cada partido de eliminatoria queda etiquetado con su ronda correcta.'],
    ['2026-07-06','Percepción vs realidad + prueba de ruido','Dos añadidos: la pestaña Veredicto ahora sigue la diferencia antes-vs-después con una banda de confianza del 95% a medida que se suman partidos, para verla pegarse a la línea de sin efecto. Y la encuesta ahora compara lo que sintieron los fans con lo que dicen los datos.'],
    ['2026-07-05','Calor vs goles','Nuevo gráfico de dispersión en el análisis profundo: sensación térmica frente al total de goles, un punto por partido, para ver si el calor por sí solo cambia el marcador. También se corrigió un dato de calor faltante, así que todo partido con estadio conocido ya lo tiene.'],
@@ -660,6 +790,7 @@ const TR={
 };
 const L=()=>TR[state.lang];
 function fmt(x){return (x>0?'+':'')+x;}
+function fmtM(usd){return '$'+((usd||0)/1e6).toFixed(1)+'M';}
 
 // ---------- helpers ----------
 const nm=t=>{const m=t.match(/(\d+)(?:\+(\d+))?/);return m?(+m[1])+(m[2]?+m[2]:0):null;};
@@ -697,6 +828,38 @@ function renderBracket(){const T=L();const order=['R32','R16','QF','SF','F'];con
     return `<div class="bmatch"><div class="r ${hw?'w':(aw?'l':'')}"><span>${flag(g.home)} ${g.home}</span><span>${hs}</span></div><div class="r ${aw?'w':(hw?'l':'')}"><span>${flag(g.away)} ${g.away}</span><span>${as}</span></div>${g.pen?`<div style="font-size:10px;color:var(--muted);text-align:right;margin-top:3px;letter-spacing:.04em">${T.pens}</div>`:''}</div>`;}).join('')
    :`<div class="bempty">${T.brComing}</div>`;
   return `<div class="bround"><h4>${T.rounds[r]}</h4>${cards}</div>`;}).join('');}
+function renderBroadcast(){
+ const T=L(); const B=D.broadcast; const sc=state.scenario;
+ const tot=B.total[sc]||0, inc=tot*B.incremental, nM=B.games.length, perMatch=nM?tot/nM:0;
+ const kpis=[[fmtM(tot),T.bcKTotal],[fmtM(inc),T.bcKIncr],[fmtM(perMatch),T.bcKPerMatch],[nM,T.bcKMatches]];
+ $('bcKpis').innerHTML=kpis.map(([v,l])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+ countScope('bcKpis');
+ $('bcBanner').innerHTML=T.bcBanner(nM);
+ Chart.defaults.color=chartColor();
+ const stOrder=STORDER.filter(s=>B.byStage[s]);
+ const stLabels=stOrder.map(s=>T.stageLabels[s]||s), stData=stOrder.map(s=>+(B.byStage[s][sc]/1e6).toFixed(1));
+ if(!bcStageChart){
+  bcStageChart=new Chart($('cBcStage'),{type:'bar',data:{labels:stLabels,datasets:[{data:stData,backgroundColor:PB(),borderRadius:5}]},
+   options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,ticks:{callback:v=>'$'+v+'M'}}}}});
+ }else{bcStageChart.data.labels=stLabels;bcStageChart.data.datasets[0].data=stData;bcStageChart.data.datasets[0].backgroundColor=PB();bcStageChart.update();}
+ $('bcStageNote').innerHTML=T.bcStageNote;
+ const tierOrder=['us','marquee','other'];
+ const trows=tierOrder.filter(t=>B.byTier[t]).map(t=>{const o=B.byTier[t];
+   return `<tr><td>${T.tierLabels[t]}</td><td>${o.n}</td><td>${fmtM(o[sc])}</td><td>${fmtM(o[sc]/o.n)}</td></tr>`;}).join('');
+ $('bcTierTable').innerHTML=`<table><thead><tr><th>${T.bcTierCol1}</th><th>${T.bcTierCol2}</th><th>${T.bcTierCol3}</th><th>${T.bcTierCol4}</th></tr></thead><tbody>${trows}</tbody></table>`;
+ const col={us:'#ff4d6d',marquee:'#f6c945',other:'#5ea0ff'};
+ const pts=B.games.map(g=>({x:+((g.audience||0)/1e6).toFixed(2),y:+((g.rev[sc]||0)/1e6).toFixed(2),tier:g.tier}));
+ if(!bcScatter){
+  bcScatter=new Chart($('cBcScatter'),{data:{datasets:[{type:'scatter',data:pts,pointBackgroundColor:pts.map(p=>col[p.tier]),pointBorderColor:pts.map(p=>col[p.tier]),pointBorderWidth:1,pointRadius:5,pointHoverRadius:7}]},
+   options:{plugins:{legend:{display:false}},scales:{x:{type:'linear',title:{display:true,text:T.bcScatterX},grid:{display:false}},y:{beginAtZero:true,title:{display:true,text:T.bcScatterY}}}}});
+ }else{bcScatter.data.datasets[0].data=pts;bcScatter.data.datasets[0].pointBackgroundColor=pts.map(p=>col[p.tier]);bcScatter.data.datasets[0].pointBorderColor=pts.map(p=>col[p.tier]);bcScatter.update();}
+ $('bcScatterLegend').innerHTML=T.bcTierLegend.map((l,i)=>`<span class="hl"><span class="dot" style="background:${[col.other,col.marquee,col.us][i]}"></span>${l}</span>`).join('');
+ $('bcScatterNote').innerHTML=T.bcScatterNote;
+ const R=B.remaining;
+ const proj={low:B.total.low+R.low,base:B.total.base+R.base,high:B.total.high+R.high};
+ $('bcProjKpis').innerHTML=['low','base','high'].map(k=>`<div class="kpi"><div class="v">${fmtM(proj[k])}</div><div class="l">${T['sc_'+k]}</div></div>`).join('');
+ countScope('bcProjKpis');
+}
 function renderUpdates(){$('updatesList').innerHTML=L().updates.map(u=>`<div class="up"><div class="ud">${u[0]}</div><div class="ut">${u[1]}</div><div class="up2">${u[2]}</div></div>`).join('');}
 
 // ---------- static text + tabs ----------
@@ -716,6 +879,7 @@ function showTab(t){state.tab=t;
  document.querySelectorAll('.tab').forEach(p=>p.classList.remove('on'));$('tab-'+t).classList.add('on');
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
  if(t==='analysis')renderAnalysis(); if(t==='verdict')renderVerdict();
+ if(t==='broadcast')renderBroadcast();
  if(t==='bracket')renderBracket(); if(t==='updates')renderUpdates();
  setTimeout(()=>{armReveal();document.querySelectorAll('#tab-'+t+' .reveal').forEach(e=>e.classList.add('in'));},50);
  window.scrollTo({top:0,behavior:'smooth'});}
@@ -1033,7 +1197,9 @@ function drawPerception(m){const T=L();const el=$('perception');if(!el)return;
 function fullRefresh(){
  applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();fillStageSelect();
  if(distChart){distChart.destroy();histChart.destroy();xgChart.destroy();momChart.destroy();subChart.destroy();welChart.destroy();if(heatScatter)heatScatter.destroy();made.analysis=false;}
+ if(bcStageChart){bcStageChart.destroy();bcStageChart=null;} if(bcScatter){bcScatter.destroy();bcScatter=null;}
  if(state.tab==='analysis')renderAnalysis(); if(state.tab==='verdict')renderVerdict();
+ if(state.tab==='broadcast')renderBroadcast();
  if(state.tab==='bracket')renderBracket(); if(state.tab==='updates')renderUpdates();
 }
 
@@ -1043,6 +1209,7 @@ $('navToggle').onclick=()=>{const open=$('menu').classList.toggle('open');$('nav
 $('selMatch').onchange=function(){state.sel=this.value;renderAnalysis();};
 $('selStage').onchange=function(){state.stage=this.value;renderAnalysis();};
 $('segHeat').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segHeat').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.heat=b.dataset.h;renderAnalysis();});
+$('segScenario').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segScenario').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.scenario=b.dataset.sc;renderBroadcast();});
 $('moreBtn').onclick=()=>{state.more=!state.more;$('moreWrap').style.display=state.more?'':'none';$('moreBtn').textContent=state.more?L().moreHide:L().moreShow;if(state.more&&histChart){histChart.resize();xgChart.resize();momChart.resize();}};
 $('langBtn').onclick=()=>{state.lang=state.lang==='en'?'es':'en';fullRefresh();};
 $('themeBtn').onclick=()=>{state.theme=state.theme==='dark'?'light':'dark';document.body.classList.toggle('dark',state.theme==='dark');fullRefresh();};
