@@ -36,6 +36,11 @@ jobs:
         env:
           CE_DB: cooling_economy.db
 
+      - name: Backfill team-strength (Elo) control
+        run: python3 populate_elo.py
+        env:
+          CE_DB: cooling_economy.db
+
       - name: Rebuild dashboard
         run: python3 build_dashboard.py
         env:
