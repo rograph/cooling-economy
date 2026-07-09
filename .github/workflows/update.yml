@@ -31,6 +31,11 @@ jobs:
           CE_DB: cooling_economy.db
           CE_ADDED_FILE: ce_added.txt
 
+      - name: Recompute Track B ad-revenue model
+        run: python3 track_b_model.py
+        env:
+          CE_DB: cooling_economy.db
+
       - name: Rebuild dashboard
         run: python3 build_dashboard.py
         env:
