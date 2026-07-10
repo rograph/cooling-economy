@@ -1176,18 +1176,24 @@ function sankeySVG(rows){const T=L();
  tiers.forEach(t=>tierTot[t]=rows.filter(r=>r.tier===t).reduce((s,r)=>s+r.v,0));
  bands.forEach(b=>bandTot[b]=rows.filter(r=>r.band===b).reduce((s,r)=>s+r.v,0));
  const grand=rows.reduce((s,r)=>s+r.v,0)||1;
- const W=720,H=270,colX=[36,342,648],nodeW=26,colH=H-40,gap=10;
- function stack(items,totalMap){let y=20;const pos={};items.forEach(k=>{const h=Math.max(8,(totalMap[k]/grand)*colH);pos[k]={y0:y,y1:y+h,h};y+=h+gap;});return pos;}
- const p1=stack(tiers,tierTot),p2=stack(bands,bandTot);
- const totH=Object.values(p1).reduce((s,o)=>Math.max(s,o.y1),0);
- const p3={total:{y0:20,y1:Math.max(20+8,totH),h:Math.max(8,totH-20)}};
+ const W=720,colX=[36,342,648],nodeW=26,unitH=180,gap=26,top=30;
+ // stack() sizes each node from its share of unitH, but the real column
+ // height (returned) already includes every gap + minimum-height floor, so
+ // the caller can size the SVG to whatever the tallest column needs instead
+ // of guessing a fixed height and clipping content that doesn't fit.
+ function stack(items,totalMap){let y=top;const pos={};items.forEach(k=>{const h=Math.max(14,(totalMap[k]/grand)*unitH);pos[k]={y0:y,y1:y+h,h};y+=h+gap;});return {pos,bottom:y-gap};}
+ const s1=stack(tiers,tierTot),s2=stack(bands,bandTot);
+ const p1=s1.pos,p2=s2.pos;
+ const totBottom=s1.bottom;
+ const p3={total:{y0:top,y1:Math.max(top+14,totBottom),h:Math.max(14,totBottom-top)}};
+ const H=Math.max(s1.bottom,s2.bottom,p3.total.y1)+26;
  const tierCol={us:'#ff4d6d',marquee:'#f6c945',other:'#5ea0ff'};
  const bandCol={early:'#94a3b8',late:'#2fe0d8',final:'#f6c945'};
  let paths='';const y1cur={},y2curIn={};
  tiers.forEach(t=>y1cur[t]=p1[t].y0);bands.forEach(b=>y2curIn[b]=p2[b].y0);
  tiers.forEach(t=>{bands.forEach(b=>{
   const r=rows.find(rr=>rr.tier===t&&rr.band===b);if(!r||!r.v)return;
-  const h=Math.max(2,(r.v/grand)*colH);
+  const h=Math.max(2,(r.v/grand)*unitH);
   const ys=y1cur[t],ye=ys+h;y1cur[t]=ye;
   const y2s=y2curIn[b],y2e=y2s+h;y2curIn[b]=y2e;
   const x0=colX[0]+nodeW,x1=colX[1],xm=(x0+x1)/2;
@@ -1195,13 +1201,13 @@ function sankeySVG(rows){const T=L();
  });});
  let y3cur=p3.total.y0;
  bands.forEach(b=>{
-  const h=Math.max(2,(bandTot[b]/grand)*colH);
+  const h=Math.max(2,(bandTot[b]/grand)*unitH);
   const ys=p2[b].y0,ye=p2[b].y1;
   const y3s=y3cur,y3e=y3s+h;y3cur=y3e;
   const x0=colX[1]+nodeW,x1=colX[2],xm=(x0+x1)/2;
   paths+=`<path d="M${x0},${ys} C${xm},${ys} ${xm},${y3s} ${x1},${y3s} L${x1},${y3e} C${xm},${y3e} ${xm},${ye} ${x0},${ye} Z" fill="${bandCol[b]}" opacity=".45"/>`;
  });
- function nodeRect(x,pos,label,fill,val){return `<rect x="${x}" y="${pos.y0}" width="${nodeW}" height="${pos.h}" rx="4" fill="${fill}"/><text x="${x+nodeW/2}" y="${pos.y0-8}" text-anchor="middle" font-size="11" font-weight="800" fill="var(--ink)" font-family="Archivo">${label}</text><text x="${x+nodeW/2}" y="${pos.y1+15}" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="Archivo">${val}</text>`;}
+ function nodeRect(x,pos,label,fill,val){return `<rect x="${x}" y="${pos.y0}" width="${nodeW}" height="${pos.h}" rx="4" fill="${fill}"/><text x="${x+nodeW/2}" y="${pos.y0-14}" text-anchor="middle" font-size="11" font-weight="800" fill="var(--ink)" font-family="Archivo">${label}</text><text x="${x+nodeW/2}" y="${pos.y0-3}" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="Archivo">${val}</text>`;}
  let nodes='';
  tiers.forEach(t=>nodes+=nodeRect(colX[0],p1[t],T.tierLabels[t].replace(/^\S+\s/,''),tierCol[t],fmtM(tierTot[t])));
  bands.forEach(b=>nodes+=nodeRect(colX[1],p2[b],T.bandLabels[b],bandCol[b],fmtM(bandTot[b])));
