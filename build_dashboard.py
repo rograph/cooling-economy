@@ -13,7 +13,7 @@ OUT = os.environ.get("CE_OUT", "/tmp/index.html")
 con = sqlite3.connect(DB); con.row_factory = sqlite3.Row
 rows = con.execute("""
  SELECT m.match_id,m.date,m.stage,m.home_team,m.away_team,m.home_goals,m.away_goals,
-        m.wbgt_kickoff,m.poss_home,m.poss_away,m.shots_home,m.shots_away,
+        m.venue,m.wbgt_kickoff,m.poss_home,m.poss_away,m.shots_home,m.shots_away,
         m.sot_home,m.sot_away,m.yellow_home,m.yellow_away,m.goal_minutes,m.pen_home,m.pen_away,
         bm.b1_g_before,bm.b1_g_after,bm.b1_c_before,bm.b1_c_after,bm.b1_s_before,bm.b1_s_after,
         bm.b1_lc_before,bm.b1_lc_after,bm.b1_cm_before,bm.b1_cm_after,
@@ -33,6 +33,7 @@ games=[]
 for r in rows:
     g={"id":r["match_id"],"date":r["date"],"home":r["home_team"],"away":r["away_team"],
        "hg":r["home_goals"],"ag":r["away_goals"],"wbgt":r["wbgt_kickoff"],"stage":r["stage"],
+       "venue":r["venue"],
        "possH":r["poss_home"],"possA":r["poss_away"],"shots":[r["shots_home"],r["shots_away"]],
        "sot":[r["sot_home"],r["sot_away"]],"cards":[r["yellow_home"],r["yellow_away"]],
        "gmin":r["goal_minutes"] or "","b1":brk(r,"b1"),"b2":brk(r,"b2"),
@@ -69,8 +70,34 @@ for st, cnt in (("QF", 4), ("SF", 2), ("3P", 1), ("F", 1)):
     band = tb.stage_band(st)
     for sc in ("low", "base", "high"):
         bRemaining[sc] += cnt * 2 * tb.SPOTS[sc] * tb.PRICE[band]["marquee"][sc]
+
+# Sankey: tier -> stage band -> total, one flow-set per scenario, so the
+# calc-chain visual matches whichever scenario the user has toggled to.
+bSankey = {}
+for sc in ("low", "base", "high"):
+    flows = {}
+    for g in bgames:
+        key = (g["tier"], tb.stage_band(g["stage"]))
+        flows[key] = flows.get(key, 0) + (g["rev"].get(sc, 0) or 0)
+    bSankey[sc] = [{"tier": t, "band": b, "v": v} for (t, b), v in flows.items() if v]
+
+# Cumulative revenue to date, one point per match date (matches on the same
+# date are summed before the running total advances).
+bByDate = {}
+for g in bgames:
+    e = bByDate.setdefault(g["date"], {"low": 0, "base": 0, "high": 0})
+    for sc in ("low", "base", "high"):
+        e[sc] += g["rev"].get(sc, 0) or 0
+run = {"low": 0, "base": 0, "high": 0}
+bCumulative = []
+for d in sorted(bByDate.keys()):
+    for sc in ("low", "base", "high"):
+        run[sc] += bByDate[d][sc]
+    bCumulative.append({"date": d, "low": run["low"], "base": run["base"], "high": run["high"]})
+
 BROADCAST = {"games": bgames, "total": bTot, "byStage": byStage, "byTier": byTier,
-             "remaining": bRemaining, "incremental": tb.INCREMENTAL}
+             "remaining": bRemaining, "incremental": tb.INCREMENTAL,
+             "sankey": bSankey, "cumulative": bCumulative}
 con.close()
 
 BASE={"2018":{"buckets":[3,5,5,6,6,1,8,7,3,9,10,7,6,5,10,5,1,9,16],"w":[10,8,13,14],"tot":122},
@@ -244,6 +271,34 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
 .heatlegend .hl{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:20px;padding:6px 12px}
 .heatlegend .dot{width:11px;height:11px;border-radius:50%}
 .scopebanner{display:block;font-size:13px;font-weight:600;line-height:1.5;color:var(--ink);background:var(--soft);border:1px solid var(--line);border-left:4px solid var(--c2);border-radius:0 10px 10px 0;padding:10px 13px;margin-bottom:11px}
+.badge{display:inline-flex;align-items:center;gap:4px;font-weight:800;font-size:10px;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;vertical-align:middle}
+.badge .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.badge.fact{background:#e2f4ea;color:var(--green)}
+.badge.estimate{background:#fbedd2;color:#9a6b12}
+.badge.assumption{background:#fde2e2;color:var(--red)}
+.matchgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:8px;margin-top:10px}
+.mcard{border:1px solid var(--line);border-radius:10px;padding:7px;background:var(--soft);cursor:pointer;transition:transform .12s,box-shadow .12s}
+.mcard:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(16,26,48,.14)}
+.mcard .mt{font-size:10px;font-weight:800;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px}
+.mcard svg{width:100%;height:auto;display:block;border-radius:6px}
+.venuegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:10px;margin-top:10px}
+.vtile{border-radius:12px;padding:13px;color:#fff;position:relative}
+.vtile .vn{font-size:12px;font-weight:800;line-height:1.25;margin-bottom:8px;min-height:30px}
+.vtile .vw{font-family:'Saira Condensed','Archivo',sans-serif;font-size:23px;font-weight:800}
+.vtile .vc{font-size:10.5px;opacity:.9;font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
+.simgrid{display:grid;grid-template-columns:1.1fr 1fr;gap:20px;margin-top:14px;align-items:center}@media(max-width:640px){.simgrid{grid-template-columns:1fr}}
+.simrow{margin-bottom:16px}
+.simrow label{display:flex;justify-content:space-between;font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:6px}
+.simrow label span:last-child{color:var(--gold);font-weight:800}
+.simrow input[type=range]{width:100%;accent-color:var(--gold)}
+.simout{background:var(--navy);color:#fff;border-radius:14px;padding:22px 20px;text-align:center}
+.simout .v{font-family:'Saira Condensed','Archivo',sans-serif;font-size:36px;font-weight:800;color:var(--gold)}
+.simout .l{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#b8c6e2;margin-top:4px}
+.simout .n{font-size:11.5px;color:#c3cfe6;margin-top:10px;line-height:1.5}
+.sankeywrap svg{width:100%;height:auto;display:block}
+.heroball{filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
+@keyframes heropulse{0%{opacity:.6;transform:scale(1)}70%{opacity:0;transform:scale(2.1)}100%{opacity:0;transform:scale(2.1)}}
+.pulsering{animation:heropulse 2.6s ease-out infinite;transform-origin:center;transform-box:fill-box}
 </style></head><body>
 <div class="topbar"><div class="tbinner">
   <div class="logo"><span class="chip">FIFA 26</span>⚽ Cooling Economy</div>
@@ -352,6 +407,16 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
    <div class="heatlegend" id="heatScatterLegend"></div>
    <div class="note" id="heatScatterNote"></div>
   </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_grid_h"></div><div class="sect-s" data-i18n="an_grid_s"></div>
+   <div class="matchgrid" id="matchGrid"></div>
+   <div class="note" data-i18n="an_grid_note"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="an_venue_h"></div><div class="sect-s" data-i18n="an_venue_s"></div>
+   <div class="venuegrid" id="venueGrid"></div>
+   <div class="note" id="venueNote"></div>
+  </div>
   </div>
  </div>
 
@@ -409,6 +474,31 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
    <div class="kgrid" id="bcProjKpis" style="grid-template-columns:repeat(3,1fr)"></div>
    <div class="note" data-i18n="bc_caveat"></div>
   </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_sankey_h"></div><div class="sect-s" data-i18n="bc_sankey_s"></div>
+   <div class="sankeywrap" id="bcSankey"></div>
+   <div class="note" id="bcSankeyNote"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_cum_h"></div><div class="sect-s" data-i18n="bc_cum_s"></div>
+   <div class="chartbox sm"><canvas id="cBcCum"></canvas></div>
+   <div class="note" data-i18n="bc_cum_note"></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="bc_sim_h"></div><div class="sect-s" data-i18n="bc_sim_s"></div>
+   <div class="simgrid">
+    <div>
+     <div class="simrow"><label><span data-i18n="sim_spots"></span><span id="simSpotsV"></span></label><input type="range" id="simSpots" min="1" max="8" value="4" step="1"></div>
+     <div class="simrow"><label><span data-i18n="sim_cpm"></span><span id="simCpmV"></span></label><input type="range" id="simCpm" min="100000" max="2500000" value="750000" step="25000"></div>
+     <div class="simrow"><label><span data-i18n="sim_aud"></span><span id="simAudV"></span></label><input type="range" id="simAud" min="1000000" max="35000000" value="12000000" step="500000"></div>
+    </div>
+    <div class="simout">
+     <div class="v" id="simOut"></div>
+     <div class="l" data-i18n="sim_outl"></div>
+     <div class="n" data-i18n="sim_note"></div>
+    </div>
+   </div>
+  </div>
  </div>
 
  <div class="tab" id="tab-bracket">
@@ -463,7 +553,7 @@ let state={tab:'home',sel:'all',heat:'all',stage:'all',lang:'en',theme:'light',u
 function toF(c){return c*9/5+32;}
 function tU(c,dec){dec=(dec==null?0:dec);c=Number(c);return state.unit==='f'?(toF(c).toFixed(dec)+'°F'):(c.toFixed(dec)+'°C');}
 let made={analysis:false};
-let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart,trackChart,bcStageChart,bcScatter;
+let distChart,histChart,xgChart,momChart,subChart,welChart,heatScatter,surveyChart,trackChart,bcStageChart,bcScatter,bcCumChart;
 const U=D.updated;
 
 // ---------- i18n ----------
@@ -528,6 +618,23 @@ const TR={
   bcStageNote:'Group-stage spots run about $200k\u2013$400k for a 30-second slot. Knockout spots ($300k\u2013$2M, per Front Office Sports and Awful Announcing on the USMNT\'s run) push the per-match total up sharply once the bracket tightens.',
   bc_tier_h:'Which matches capture the value',bc_tier_s:'Matches are tagged USA (either team is the United States), marquee (a historically major team plays), or other. The tier drives both the spot price and the audience estimate.',
   bcTierCol1:'Tier',bcTierCol2:'Matches',bcTierCol3:'Revenue (this scenario)',bcTierCol4:'Avg / match',
+  bandLabels:{early:'Group / R32',late:'R16-QF-SF',final:'Final / 3rd place'},
+  sankeyTotal:'Total revenue',
+  bc_sankey_h:'Where the money flows',bc_sankey_s:'The same calculation chain as the KPIs above, laid out as a flow: match tier, into tournament stage, into the total for this scenario.',
+  bcSankeyNote:(b)=>`Read left to right: tier of match \u2192 stage band \u2192 total. ${b} Final-band pricing is an unsourced assumption scaled up from the knockout rate, not an independently cited figure \u2014 treat the right-hand edge of the flow as softer than the rest.`,
+  bc_cum_h:'Revenue so far, day by day',bc_cum_s:'Running total across the tournament to date, across all three scenarios \u2014 shows how much of the season\u2019s total has already landed versus what knockout matches still add.',
+  bc_cum_note:'Steps track match dates, not a smooth trend \u2014 days with more matches (or a knockout tie) jump more than a normal group-stage day.',
+  bc_sim_h:'Build your own estimate',bc_sim_s:'Drag the sliders to see how spot count, price per spot, and audience size move the per-match revenue estimate \u2014 the exact calc chain the model above uses.',
+  sim_spots:'30-second spots per break',sim_cpm:'Price per spot',sim_aud:'Audience (viewers)',
+  sim_outl:'Estimated revenue per match (2 breaks)',
+  sim_note:'This mirrors track_b_model.py\u2019s formula: revenue = spots \u00d7 price \u00d7 2 breaks. Audience only affects a real campaign\u2019s CPM math, not this simplified per-spot version \u2014 shown for intuition, not as a fourth pricing model.',
+  an_grid_h:'Every match, at a glance',an_grid_s:'One tile per match: color shows kickoff heat, dashed lines mark the ~22\' and ~67\' breaks, dots mark goals. Click a tile to load that match above.',
+  an_grid_note:'Sorted by date. Heat color uses the same cool/warm/hot cutoffs as the heat panel above.',
+  an_venue_h:'Venue comparison',an_venue_s:'Average kickoff WBGT by stadium across the matches played there so far.',
+  venueMatches:'matches',
+  venueNote:'Not a geographic map \u2014 stadium coordinates aren\u2019t in the data yet, so this is a sorted tile comparison, not a real map. Two pairs of names likely refer to the same physical stadium under an older name (Reliant Stadium / NRG Stadium in Houston; BC Place / BC Place Stadium in Vancouver) \u2014 shown separately here rather than silently merged, since that would assume a fact not yet confirmed.',
+  badge_fact:'Fact',badge_estimate:'Estimate',badge_assumption:'Assumption',
+  br_breaksfx:'post-break goals',
   tierLabels:{us:'\ud83c\uddfa\ud83c\uddf8 USA matches',marquee:'\u2b50 Marquee',other:'Other'},
   bc_scatter_h:'Revenue scales with audience',bc_scatter_s:'One dot per match: reported or estimated audience against modeled ad revenue. Three matches use real Nielsen figures; the rest use a tiered estimate, labeled as such in the underlying data.',
   bcScatterX:'audience (millions)',bcScatterY:'ad revenue per match ($M)',
@@ -585,7 +692,7 @@ const TR={
   xgNote:(n)=>`After a break, goals, chance quality (xG) and shots all fall to about two-thirds of the level just before it. Here is the tell: <b>chance quality drops just as much as the goals do</b>. If it were only bad luck in front of goal, the good chances would still be there and only the goals would fall. Instead teams genuinely create less right after the whistle. From ${n} group games.`,
   momK:['How much momentum moves','How often the top team changes','Goals right after the breaks'],
   momNote:(M)=>`The team on top really does change a lot: in about 1 in 4 breaks (<b>${M.flip}%</b>), the other team takes over. But taking control does not mean you score. The goals after a break go to whoever is on top <b>at that moment</b> (${M.ontop[0]} of ${M.postgoals}), not to the team that just grabbed momentum (${M.gainer[0]}). With only ${M.postgoals} post-break goals so far, read this part lightly. From 54 group games \u2014 momentum tracking has not been extended to the knockout matches yet, so this note is stuck at the group-stage sample while the rest of the dashboard has grown to ${D.n} matches.`,
-  eloNote:'<b>Added 2026-07-09, team strength held roughly fixed.</b> The earlier reading that "the leading team scores more after a break" is confounded: leading teams are usually just the stronger team already (Elo ~1 month pre-tournament). Looking only at post-break goals where the lead and the Elo favorite disagree \u2014 a team leading despite being the weaker side, or trailing despite being the stronger one \u2014 the pattern does not hold: those goals split roughly evenly, if anything tilting toward the trailing side (n=10, too small to lean on). Read as: the momentum-reset story so far looks more like a quality story than a break-timing story, but the de-confounded sample is thin.',
+  eloNote:'<span class="badge estimate"><span class="dot"></span>Estimate</span> Team strength held roughly fixed (added 2026-07-09). The earlier reading that "the leading team scores more after a break" is confounded: leading teams are usually just the stronger team already (Elo ~1 month pre-tournament). Looking only at post-break goals where the lead and the Elo favorite disagree \u2014 a team leading despite being the weaker side, or trailing despite being the stronger one \u2014 the pattern does not hold: those goals split roughly evenly, if anything tilting toward the trailing side (n=10, too small to lean on). Read as: the momentum-reset story so far looks more like a quality story than a break-timing story, but the de-confounded sample is thin.',
   tugB1:'Around the 22\' break (before → after)',tugB2:'Around the 67\' break (before → after)',
   tugKey:'○ before the break     ⚽ after the break',
   tugNote:(g)=>{const m=g.mom,side=v=>v>3?g.home:(v<-3?g.away:'neither side'),fl=(a,b)=>((a>3&&b<-3)||(a<-3&&b>3)),flipped=fl(m[0],m[1])||fl(m[2],m[3]);
@@ -690,6 +797,23 @@ const TR={
   bcStageNote:'Las tandas de la fase de grupos rondan $200k\u2013$400k por 30 segundos. Las de eliminatoria ($300k\u2013$2M, seg\u00fan Front Office Sports y Awful Announcing sobre la carrera del equipo de EE. UU.) suben fuerte el total por partido a medida que se cierra el cuadro.',
   bc_tier_h:'Qu\u00e9 partidos capturan el valor',bc_tier_s:'Los partidos se etiquetan como EE. UU. (juega ese equipo), marquee (juega un equipo hist\u00f3ricamente grande) u otro. El nivel define tanto el precio de tanda como el estimado de audiencia.',
   bcTierCol1:'Nivel',bcTierCol2:'Partidos',bcTierCol3:'Ingresos (este escenario)',bcTierCol4:'Prom. / partido',
+  bandLabels:{early:'Grupos / R32',late:'Octavos-Cuartos-Semis',final:'Final / 3er lugar'},
+  sankeyTotal:'Ingresos totales',
+  bc_sankey_h:'Hacia d\u00f3nde va el dinero',bc_sankey_s:'La misma cadena de c\u00e1lculo que los KPI de arriba, en forma de flujo: nivel del partido, hacia la fase del torneo, hacia el total de este escenario.',
+  bcSankeyNote:(b)=>`Se lee de izquierda a derecha: nivel del partido \u2192 banda de fase \u2192 total. ${b} El precio de la banda Final es un supuesto sin fuente, escalado desde la tarifa de eliminatoria, no una cifra citada de forma independiente \u2014 trata el extremo derecho del flujo como menos s\u00f3lido que el resto.`,
+  bc_cum_h:'Ingresos hasta ahora, d\u00eda a d\u00eda',bc_cum_s:'Total acumulado del torneo hasta la fecha, en los tres escenarios \u2014 muestra cu\u00e1nto del total de la temporada ya lleg\u00f3 frente a lo que a\u00fan suman los partidos de eliminatoria.',
+  bc_cum_note:'Los escalones siguen las fechas de partido, no una tendencia suave \u2014 los d\u00edas con m\u00e1s partidos (o una eliminatoria) suben m\u00e1s que un d\u00eda normal de grupos.',
+  bc_sim_h:'Arma tu propio estimado',bc_sim_s:'Mueve los controles para ver c\u00f3mo el n\u00famero de tandas, el precio por tanda y el tama\u00f1o de audiencia cambian el estimado de ingresos por partido \u2014 la misma cadena de c\u00e1lculo del modelo de arriba.',
+  sim_spots:'Tandas de 30 segundos por pausa',sim_cpm:'Precio por tanda',sim_aud:'Audiencia (espectadores)',
+  sim_outl:'Ingresos estimados por partido (2 pausas)',
+  sim_note:'Esto refleja la f\u00f3rmula de track_b_model.py: ingresos = tandas \u00d7 precio \u00d7 2 pausas. La audiencia solo afecta las matem\u00e1ticas de CPM de una campa\u00f1a real, no esta versi\u00f3n simplificada por tanda \u2014 se muestra para intuici\u00f3n, no como un cuarto modelo de precios.',
+  an_grid_h:'Cada partido, de un vistazo',an_grid_s:'Una casilla por partido: el color muestra el calor al inicio, las l\u00edneas punteadas marcan las pausas de ~22\' y ~67\', los puntos marcan goles. Haz clic en una casilla para cargar ese partido arriba.',
+  an_grid_note:'Ordenado por fecha. El color de calor usa los mismos cortes fresco/c\u00e1lido/caluroso que el panel de calor de arriba.',
+  an_venue_h:'Comparaci\u00f3n de sedes',an_venue_s:'WBGT promedio al inicio por estadio, en los partidos jugados ah\u00ed hasta ahora.',
+  venueMatches:'partidos',
+  venueNote:'No es un mapa geogr\u00e1fico \u2014 las coordenadas de los estadios a\u00fan no est\u00e1n en los datos, as\u00ed que esto es una comparaci\u00f3n de casillas ordenadas, no un mapa real. Dos pares de nombres probablemente sean el mismo estadio f\u00edsico con un nombre anterior (Reliant Stadium / NRG Stadium en Houston; BC Place / BC Place Stadium en Vancouver) \u2014 se muestran por separado en vez de fusionarlos en silencio, ya que eso asumir\u00eda un hecho a\u00fan no confirmado.',
+  badge_fact:'Hecho',badge_estimate:'Estimado',badge_assumption:'Supuesto',
+  br_breaksfx:'goles tras pausa',
   tierLabels:{us:'\ud83c\uddfa\ud83c\uddf8 Partidos de EE. UU.',marquee:'\u2b50 Marquee',other:'Otros'},
   bc_scatter_h:'Los ingresos suben con la audiencia',bc_scatter_s:'Un punto por partido: audiencia reportada o estimada frente a los ingresos publicitarios modelados. Tres partidos usan cifras reales de Nielsen; el resto usa un estimado por nivel, marcado como tal en los datos.',
   bcScatterX:'audiencia (millones)',bcScatterY:'ingresos por partido ($M)',
@@ -746,7 +870,7 @@ const TR={
   xgNote:(n)=>`Después de una pausa, los goles, la calidad de las ocasiones (xG) y los remates bajan a unos dos tercios de lo que eran justo antes. La clave: <b>la calidad de las ocasiones baja tanto como los goles</b>. Si fuera solo mala suerte de cara al arco, las buenas ocasiones seguirían ahí y solo bajarían los goles. En cambio, los equipos de verdad crean menos justo tras el pitazo. De ${n} partidos de grupos.`,
   momK:['Cuánto se mueve el momentum','Cuántas veces cambia el dominante','Goles justo tras las pausas'],
   momNote:(M)=>`El equipo que domina s\u00ed cambia bastante: en 1 de cada 4 pausas (<b>${M.flip}%</b>), el otro toma el control. Pero tomar el control no significa marcar. Los goles tras la pausa son de quien domina <b>en ese momento</b> (${M.ontop[0]} de ${M.postgoals}), no del que acaba de agarrar el momentum (${M.gainer[0]}). Con solo ${M.postgoals} goles tras la pausa hasta ahora, t\u00f3malo con pinzas. De 54 partidos de grupos \u2014 el seguimiento de momentum todav\u00eda no se extendi\u00f3 a las eliminatorias, as\u00ed que esta nota se qued\u00f3 en la muestra de grupos mientras el resto del tablero ya lleg\u00f3 a ${D.n} partidos.`,
-  eloNote:'<b>Agregado 2026-07-09, con la fuerza de los equipos m\u00e1s controlada.</b> La lectura anterior de que "el equipo que va ganando marca m\u00e1s tras una pausa" est\u00e1 confundida: el que va ganando suele ser sencillamente el equipo m\u00e1s fuerte (Elo de ~1 mes antes del torneo). Mirando solo los goles tras la pausa donde el que va ganando y el favorito por Elo NO coinciden \u2014ganando pese a ser el m\u00e1s d\u00e9bil, o perdiendo pese a ser el m\u00e1s fuerte\u2014, el patr\u00f3n no se sostiene: esos goles se reparten parejo, si acaso un poco a favor del que iba perdiendo (n=10, muy poco para apoyarse). Lectura: la historia del "reinicio de momentum" hasta ahora se parece m\u00e1s a una historia de calidad de plantilla que de tiempos de pausa, pero la muestra sin ese sesgo es chica.',
+  eloNote:'<span class="badge estimate"><span class="dot"></span>Estimado</span> Con la fuerza de los equipos m\u00e1s controlada (agregado 2026-07-09). La lectura anterior de que "el equipo que va ganando marca m\u00e1s tras una pausa" est\u00e1 confundida: el que va ganando suele ser sencillamente el equipo m\u00e1s fuerte (Elo de ~1 mes antes del torneo). Mirando solo los goles tras la pausa donde el que va ganando y el favorito por Elo NO coinciden \u2014ganando pese a ser el m\u00e1s d\u00e9bil, o perdiendo pese a ser el m\u00e1s fuerte\u2014, el patr\u00f3n no se sostiene: esos goles se reparten parejo, si acaso un poco a favor del que iba perdiendo (n=10, muy poco para apoyarse). Lectura: la historia del "reinicio de momentum" hasta ahora se parece m\u00e1s a una historia de calidad de plantilla que de tiempos de pausa, pero la muestra sin ese sesgo es chica.',
   tugB1:'Alrededor de la pausa del 22\' (antes → después)',tugB2:'Alrededor de la pausa del 67\' (antes → después)',
   tugKey:'○ antes de la pausa     ⚽ después de la pausa',
   tugNote:(g)=>{const m=g.mom,side=v=>v>3?g.home:(v<-3?g.away:'ninguno'),fl=(a,b)=>((a>3&&b<-3)||(a<-3&&b>3)),flipped=fl(m[0],m[1])||fl(m[2],m[3]);
@@ -795,6 +919,7 @@ const TR={
 const L=()=>TR[state.lang];
 function fmt(x){return (x>0?'+':'')+x;}
 function fmtM(usd){return '$'+((usd||0)/1e6).toFixed(1)+'M';}
+function badgeHTML(level){const T=L();return `<span class="badge ${level}"><span class="dot"></span>${T['badge_'+level]}</span>`;}
 
 // ---------- helpers ----------
 const nm=t=>{const m=t.match(/(\d+)(?:\+(\d+))?/);return m?(+m[1])+(m[2]?+m[2]:0):null;};
@@ -829,7 +954,8 @@ function renderBracket(){const T=L();const order=['R32','R16','QF','SF','F'];con
  $('bracketWrap').innerHTML=order.map(r=>{const ms=byR[r];
   const cards=ms.length?ms.map(g=>{let hw=g.hg>g.ag,aw=g.ag>g.hg;let hs=''+g.hg,as=''+g.ag;
     if(g.pen){hw=g.pen[0]>g.pen[1];aw=g.pen[1]>g.pen[0];const ps=v=>` <span style="color:var(--muted);font-weight:600">(${v})</span>`;hs=g.hg+ps(g.pen[0]);as=g.ag+ps(g.pen[1]);}
-    return `<div class="bmatch"><div class="r ${hw?'w':(aw?'l':'')}"><span>${flag(g.home)} ${g.home}</span><span>${hs}</span></div><div class="r ${aw?'w':(hw?'l':'')}"><span>${flag(g.away)} ${g.away}</span><span>${as}</span></div>${g.pen?`<div style="font-size:10px;color:var(--muted);text-align:right;margin-top:3px;letter-spacing:.04em">${T.pens}</div>`:''}</div>`;}).join('')
+    const pbg=(g.b1&&g.b1.g?g.b1.g[1]:0)+(g.b2&&g.b2.g?g.b2.g[1]:0);
+    return `<div class="bmatch"><div class="r ${hw?'w':(aw?'l':'')}"><span>${flag(g.home)} ${g.home}</span><span>${hs}</span></div><div class="r ${aw?'w':(hw?'l':'')}"><span>${flag(g.away)} ${g.away}</span><span>${as}</span></div>${g.pen?`<div style="font-size:10px;color:var(--muted);text-align:right;margin-top:3px;letter-spacing:.04em">${T.pens}</div>`:''}<div style="font-size:10px;color:var(--muted);text-align:right;margin-top:3px;letter-spacing:.04em" title="${T.br_breaksfx}">⚡ ${pbg} ${T.br_breaksfx}</div></div>`;}).join('')
    :`<div class="bempty">${T.brComing}</div>`;
   return `<div class="bround"><h4>${T.rounds[r]}</h4>${cards}</div>`;}).join('');}
 function renderBroadcast(){
@@ -863,6 +989,61 @@ function renderBroadcast(){
  const proj={low:B.total.low+R.low,base:B.total.base+R.base,high:B.total.high+R.high};
  $('bcProjKpis').innerHTML=['low','base','high'].map(k=>`<div class="kpi"><div class="v">${fmtM(proj[k])}</div><div class="l">${T['sc_'+k]}</div></div>`).join('');
  countScope('bcProjKpis');
+ $('bcSankey').innerHTML=sankeySVG(B.sankey[sc]||[]);
+ $('bcSankeyNote').innerHTML=T.bcSankeyNote(badgeHTML('assumption'));
+ const CUM=B.cumulative||[];
+ const cumLabels=CUM.map(c=>c.date), cumLow=CUM.map(c=>+(c.low/1e6).toFixed(1)),
+       cumBase=CUM.map(c=>+(c.base/1e6).toFixed(1)), cumHigh=CUM.map(c=>+(c.high/1e6).toFixed(1));
+ if(!bcCumChart){
+  bcCumChart=new Chart($('cBcCum'),{type:'line',data:{labels:cumLabels,datasets:[
+    {label:T.sc_low,data:cumLow,borderColor:GREY,backgroundColor:'transparent',tension:.25,pointRadius:1.5,borderWidth:2},
+    {label:T.sc_base,data:cumBase,borderColor:PB(),backgroundColor:'rgba(10,31,68,.10)',fill:true,tension:.25,pointRadius:1.5,borderWidth:3},
+    {label:T.sc_high,data:cumHigh,borderColor:GOLD,backgroundColor:'transparent',tension:.25,pointRadius:1.5,borderWidth:2,borderDash:[5,3]}]},
+   options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,ticks:{callback:v=>'$'+v+'M'}}}}});
+ }else{
+  bcCumChart.data.labels=cumLabels;
+  bcCumChart.data.datasets[0].data=cumLow;bcCumChart.data.datasets[1].data=cumBase;bcCumChart.data.datasets[2].data=cumHigh;
+  bcCumChart.update();
+ }
+ simRecompute();
+}
+function simRecompute(){
+ const spotsEl=$('simSpots'),cpmEl=$('simCpm'),audEl=$('simAud');if(!spotsEl)return;
+ const T=L();
+ const spots=+spotsEl.value,cpm=+cpmEl.value,aud=+audEl.value;
+ const perMatch=spots*cpm*2;
+ $('simOut').textContent=fmtM(perMatch);
+ $('simSpotsV').textContent=spots;
+ $('simCpmV').textContent='$'+Math.round(cpm/1000)+'k';
+ $('simAudV').textContent=(aud/1e6).toFixed(1)+'M';
+}
+function miniMatchSVG(g){const w=118,h=32,pad=4,fw=w-2*pad;
+ const X=mn=>pad+(Math.max(0,Math.min(95,mn))/95)*fw;
+ const heat=g.wbgt==null?'#94a3b8':(g.wbgt>=28?'#ff4d6d':(g.wbgt>=22?'#f6c945':'#2fb7d8'));
+ const goals=parseGoalsT(g.gmin||'');
+ const dots=goals.map(o=>`<circle cx="${X(o.m)}" cy="${o.team==='h'?11:21}" r="2.4" fill="#fff" stroke="rgba(0,0,0,.25)" stroke-width=".5"/>`).join('');
+ return `<svg viewBox="0 0 ${w} ${h}" role="img"><rect width="${w}" height="${h}" rx="6" fill="${heat}" opacity=".8"/>
+  <line x1="${X(22)}" y1="0" x2="${X(22)}" y2="${h}" stroke="#fff" stroke-width="1.3" stroke-dasharray="2 2" opacity=".85"/>
+  <line x1="${X(67)}" y1="0" x2="${X(67)}" y2="${h}" stroke="#fff" stroke-width="1.3" stroke-dasharray="2 2" opacity=".85"/>
+  ${dots}</svg>`;}
+function renderMatchGrid(){
+ const sorted=G.slice().sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:0));
+ $('matchGrid').innerHTML=sorted.map(g=>`<div class="mcard" data-id="${g.id}" data-stage="${g.stage}" title="${g.home} ${g.hg}-${g.ag} ${g.away} · ${g.date}"><div class="mt">${flag(g.home)}${g.hg}-${g.ag}${flag(g.away)}</div>${miniMatchSVG(g)}</div>`).join('');
+ $('matchGrid').querySelectorAll('.mcard').forEach(el=>{el.onclick=()=>{
+  const id=el.dataset.id,st=el.dataset.stage;
+  state.stage=st;fillStageSelect();fillMatchSelect(st);state.sel=id;$('selMatch').value=id;$('selStage').value=st;
+  renderAnalysis();$('readbox').scrollIntoView({behavior:'smooth',block:'start'});
+ };});
+}
+function renderVenueGrid(){
+ const T=L();const by={};
+ G.forEach(g=>{if(!g.venue)return;const e=by[g.venue]=by[g.venue]||{n:0,sum:0,cnt:0};e.n++;if(g.wbgt!=null){e.sum+=g.wbgt;e.cnt++;}});
+ const arr=Object.entries(by).map(([venue,o])=>({venue,n:o.n,avg:o.cnt?o.sum/o.cnt:null})).sort((a,b)=>(b.avg==null?-1:b.avg)-(a.avg==null?-1:a.avg));
+ $('venueGrid').innerHTML=arr.map(v=>{
+  const heat=v.avg==null?'#94a3b8':(v.avg>=28?'#ff4d6d':(v.avg>=22?'#e7b53c':'#2fb7d8'));
+  return `<div class="vtile" style="background:${heat}"><div class="vn">${v.venue}</div><div class="vw">${v.avg!=null?tU(v.avg,1):'—'}</div><div class="vc">${v.n} ${T.venueMatches}</div></div>`;
+ }).join('');
+ $('venueNote').innerHTML=badgeHTML('estimate')+' '+T.venueNote;
 }
 function renderUpdates(){$('updatesList').innerHTML=L().updates.map(u=>`<div class="up"><div class="ud">${u[0]}</div><div class="ut">${u[1]}</div><div class="up2">${u[2]}</div></div>`).join('');}
 
@@ -907,6 +1088,12 @@ function heroSVG(){const x=m=>30+(m/90)*640,w=(a,b)=>x(b)-x(a),es=state.lang==='
   <text x="30" y="114" font-size="11" fill="var(--muted)" font-family="Archivo">0'</text>
   <text x="670" y="114" text-anchor="end" font-size="11" fill="var(--muted)" font-family="Archivo">90'</text>
   <text x="${x(45)}" y="114" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="Archivo">HT</text>
+  <circle class="pulsering" cx="${x(22)}" cy="76" r="9" fill="none" stroke="var(--red)" stroke-width="2"/>
+  <circle class="pulsering" cx="${x(67)}" cy="76" r="9" fill="none" stroke="var(--red)" stroke-width="2" style="animation-delay:1.3s"/>
+  <circle class="heroball" cx="30" cy="76" r="6" fill="var(--navy)" stroke="var(--gold)" stroke-width="1.5">
+   <animate attributeName="cx" values="30;670;30" dur="9s" repeatCount="indefinite"/>
+   <animate attributeName="cy" values="76;68;76;84;76" dur="1.15s" repeatCount="indefinite"/>
+  </circle>
  </svg><div style="text-align:center;font-size:12.5px;color:var(--muted);margin-top:2px">${cap}</div>`;}
 function pitchSVG(hp,hName,aName){const W=720,H=300,P=12,fw=W-2*P,div=P+(hp/100)*fw,cx=W/2,cy=H/2;
  const line=(a)=>`stroke="#ffffff" stroke-width="2" opacity="${a}" fill="none"`;
@@ -981,6 +1168,46 @@ function goalStripSVG(g){const W=720,pad=16,H=150,top=26,bot=104,fw=W-2*pad,cy=(
   <text x="${pad+6}" y="${bot-8}" font-size="11" fill="#fff" opacity=".85" font-family="Archivo">${g.away}</text>
   ${balls}${ticks}
  </svg>`;}
+function sankeySVG(rows){const T=L();
+ const tiers=['us','marquee','other'].filter(t=>rows.some(r=>r.tier===t));
+ const bands=['early','late','final'].filter(b=>rows.some(r=>r.band===b));
+ if(!tiers.length||!bands.length)return `<div class="pitchprompt" style="padding:20px">${T.opt_all}</div>`;
+ const tierTot={},bandTot={};
+ tiers.forEach(t=>tierTot[t]=rows.filter(r=>r.tier===t).reduce((s,r)=>s+r.v,0));
+ bands.forEach(b=>bandTot[b]=rows.filter(r=>r.band===b).reduce((s,r)=>s+r.v,0));
+ const grand=rows.reduce((s,r)=>s+r.v,0)||1;
+ const W=720,H=270,colX=[36,342,648],nodeW=26,colH=H-40,gap=10;
+ function stack(items,totalMap){let y=20;const pos={};items.forEach(k=>{const h=Math.max(8,(totalMap[k]/grand)*colH);pos[k]={y0:y,y1:y+h,h};y+=h+gap;});return pos;}
+ const p1=stack(tiers,tierTot),p2=stack(bands,bandTot);
+ const totH=Object.values(p1).reduce((s,o)=>Math.max(s,o.y1),0);
+ const p3={total:{y0:20,y1:Math.max(20+8,totH),h:Math.max(8,totH-20)}};
+ const tierCol={us:'#ff4d6d',marquee:'#f6c945',other:'#5ea0ff'};
+ const bandCol={early:'#94a3b8',late:'#2fe0d8',final:'#f6c945'};
+ let paths='';const y1cur={},y2curIn={};
+ tiers.forEach(t=>y1cur[t]=p1[t].y0);bands.forEach(b=>y2curIn[b]=p2[b].y0);
+ tiers.forEach(t=>{bands.forEach(b=>{
+  const r=rows.find(rr=>rr.tier===t&&rr.band===b);if(!r||!r.v)return;
+  const h=Math.max(2,(r.v/grand)*colH);
+  const ys=y1cur[t],ye=ys+h;y1cur[t]=ye;
+  const y2s=y2curIn[b],y2e=y2s+h;y2curIn[b]=y2e;
+  const x0=colX[0]+nodeW,x1=colX[1],xm=(x0+x1)/2;
+  paths+=`<path d="M${x0},${ys} C${xm},${ys} ${xm},${y2s} ${x1},${y2s} L${x1},${y2e} C${xm},${y2e} ${xm},${ye} ${x0},${ye} Z" fill="${tierCol[t]}" opacity=".5"/>`;
+ });});
+ let y3cur=p3.total.y0;
+ bands.forEach(b=>{
+  const h=Math.max(2,(bandTot[b]/grand)*colH);
+  const ys=p2[b].y0,ye=p2[b].y1;
+  const y3s=y3cur,y3e=y3s+h;y3cur=y3e;
+  const x0=colX[1]+nodeW,x1=colX[2],xm=(x0+x1)/2;
+  paths+=`<path d="M${x0},${ys} C${xm},${ys} ${xm},${y3s} ${x1},${y3s} L${x1},${y3e} C${xm},${y3e} ${xm},${ye} ${x0},${ye} Z" fill="${bandCol[b]}" opacity=".45"/>`;
+ });
+ function nodeRect(x,pos,label,fill,val){return `<rect x="${x}" y="${pos.y0}" width="${nodeW}" height="${pos.h}" rx="4" fill="${fill}"/><text x="${x+nodeW/2}" y="${pos.y0-8}" text-anchor="middle" font-size="11" font-weight="800" fill="var(--ink)" font-family="Archivo">${label}</text><text x="${x+nodeW/2}" y="${pos.y1+15}" text-anchor="middle" font-size="10" fill="var(--muted)" font-family="Archivo">${val}</text>`;}
+ let nodes='';
+ tiers.forEach(t=>nodes+=nodeRect(colX[0],p1[t],T.tierLabels[t].replace(/^\S+\s/,''),tierCol[t],fmtM(tierTot[t])));
+ bands.forEach(b=>nodes+=nodeRect(colX[1],p2[b],T.bandLabels[b],bandCol[b],fmtM(bandTot[b])));
+ nodes+=nodeRect(colX[2],p3.total,T.sankeyTotal,'var(--navy)',fmtM(grand));
+ return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Revenue flow">${paths}${nodes}</svg>`;
+}
 function meterSVG(p){const pos=isNaN(p)?0:Math.max(0,Math.min(1,1-p/0.3));const cx=40+pos*620;const T=L();
  const col=p<0.05?'#15924a':(p<0.15?'#e7b53c':'#94a3b8');
  return `<svg class="hero-svg" viewBox="0 0 700 64" role="img"><defs><linearGradient id="mg" x1="0" x2="1"><stop offset="0" stop-color="#94a3b8"/><stop offset=".55" stop-color="#e7b53c"/><stop offset="1" stop-color="#15924a"/></linearGradient></defs>
@@ -1061,6 +1288,8 @@ function makeAnalysis(){
  const hotG=G.filter(g=>g.wbgt!=null&&g.wbgt>=28),coolG=G.filter(g=>g.wbgt!=null&&g.wbgt<28),avgG=a=>a.length?(a.reduce((s,g)=>s+g.hg+g.ag,0)/a.length).toFixed(2):'0';
  $('heatScatterLegend').innerHTML=T.heatScatterLeg().map((l,i)=>`<span class="hl"><span class="dot" style="background:${['#5ea0ff','#ff4d6d'][i]}"></span>${l}</span>`).join('');
  $('heatScatterNote').innerHTML=T.heatScatterNote(rr,avgG(hotG),avgG(coolG),nH);
+ renderMatchGrid();
+ renderVenueGrid();
 }
 const STORDER=['group','R32','R16','QF','SF','3P','F'];
 function matchesForStage(st){
@@ -1224,6 +1453,7 @@ $('selMatch').onchange=function(){state.sel=this.value;renderAnalysis();};
 $('selStage').onchange=function(){state.stage=this.value;fillMatchSelect(state.stage);renderAnalysis();};
 $('segHeat').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segHeat').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.heat=b.dataset.h;renderAnalysis();});
 $('segScenario').querySelectorAll('button').forEach(b=>b.onclick=()=>{$('segScenario').querySelectorAll('button').forEach(x=>x.classList.remove('on'));b.classList.add('on');state.scenario=b.dataset.sc;renderBroadcast();});
+['simSpots','simCpm','simAud'].forEach(id=>{const el=$(id);if(el)el.oninput=simRecompute;});
 $('moreBtn').onclick=()=>{state.more=!state.more;$('moreWrap').style.display=state.more?'':'none';$('moreBtn').textContent=state.more?L().moreHide:L().moreShow;if(state.more&&histChart){histChart.resize();xgChart.resize();momChart.resize();}};
 $('langBtn').onclick=()=>{state.lang=state.lang==='en'?'es':'en';fullRefresh();};
 $('themeBtn').onclick=()=>{state.theme=state.theme==='dark'?'light':'dark';document.body.classList.toggle('dark',state.theme==='dark');fullRefresh();};
