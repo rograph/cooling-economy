@@ -1,8 +1,10 @@
 # Cooling Economy
 
-**Do hydration breaks change the game?** A live, self-updating dashboard that tests whether the mandatory cooling breaks at the 2026 FIFA World Cup actually change how matches play out.
+**Do hydration breaks change the game?** A data project that tracked every match of the 2026 FIFA World Cup to test whether the tournament's mandatory cooling breaks changed how the football played out, and what those breaks were worth in broadcast ad money. The tournament ended July 19, 2026; the dataset is complete and frozen, and the dashboard now stands as the project's final report.
 
-### [Open the live dashboard →](https://rograph.github.io/cooling-economy/)
+### [Open the dashboard →](https://rograph.github.io/cooling-economy/)
+
+Part of **Cooling Break**, a sports analytics lab by [Rodolfo López](https://rodolfo.app).
 
 ![Cooling Economy - do hydration breaks change the game?](./cooling_economy_card.png)
 
@@ -10,57 +12,56 @@
 
 ## The question
 
-At the 2026 World Cup, most matches stop twice for a short cooling break so players can drink and cool down in the heat, once in each half. Broadcasters and coaches treat these pauses as a reset. This project asks a plain question and answers it with data: do the breaks change the football?
+At the 2026 World Cup, every match stopped twice for a three-minute cooling break, near the 22nd and 67th minute, so players could drink and cool down. Broadcasters and coaches treated these pauses as a reset. This project asked a plain question and answered it with data: did the breaks change the football? And since every break is also two extra minutes of commercial airtime, a second track modeled what that airtime was worth.
 
-For every match it measures goals, chance quality, possession, momentum, cards and substitutions in the ten minutes on each side of each break, pools the result across the whole tournament, and keeps a running verdict that updates as matches are played.
+## What the data says, final
 
-## What the data says so far
+Across all 104 matches, play after a break looks like play before it. Goals in the ten minutes after the breaks (53) trail the ten minutes before (59), but the gap sits inside the range you get by chance, it shrank as the sample grew, and the same pattern holds in hot games and cooler ones. The 2026 numbers track the no-break 2018 and 2022 World Cups closely. Final verdict: no measurable effect on match outcomes. The broadcast track closes at an estimated **$351.6M** (base scenario, range $184M to $598M) of US ad inventory created by the breaks across the tournament, built from sourced spot prices and reported Nielsen audiences where available.
 
-Through the round of 16, matches with cooling breaks look statistically indistinguishable from matches without them. Scoring in the ten minutes after a break is about even with the ten minutes before, the same pattern shows up in hot games and cooler ones, and the 2026 numbers track the no-break 2018 and 2022 World Cups closely. The live Verdict tab carries the current call, a 95% confidence band, and the honest caveats. Findings update automatically as the knockouts finish, so the dashboard is the source of truth, not this README.
+Every figure on the dashboard is labeled as measured, estimated, or assumed, and each stored record carries a sources log. One pending correction: the final's official Nielsen audience, added when published.
 
 ## What is on the dashboard
 
-- **Home** - the headline verdict and the key numbers at a glance.
+- **Home** - the final verdict and the key numbers at a glance.
 - **Analysis** - per-match and pooled views: a stadium heat map, before/after break tables, possession and momentum shifts, goal timing, chance quality (xG), substitutions, player welfare, and a heat-versus-goals scatter. Filter by round or by heat.
-- **Verdict** - the current call with a confidence band that tightens as the sample grows.
-- **Bracket** - the knockout path, filling in as it is played.
-- **Survey** - what fans felt, pooled live, set against what the data shows.
-- **About** - data sources, method and limitations in plain language.
+- **Verdict** - the closing call, with the confidence band that never left the no-effect line.
+- **Broadcast** - the ad-revenue model: spot prices by stage, reported audiences, revenue flows, and a build-your-own estimate.
+- **Bracket** - the full knockout path to Spain's title.
+- **About** - data sources, method, honest limits, glossary, and the full update log.
 
 English and Spanish, light and dark, Celsius and Fahrenheit.
 
-## How it works
+## How it worked
 
 ```
 ESPN public API  ──┐
                    ├──▶  update.py  ──▶  SQLite store  ──▶  build_dashboard.py  ──▶  index.html
 Open-Meteo (WBGT) ─┘         ▲                                                          │
                              │                                                          ▼
-                    GitHub Actions (daily cron) ──────────────────────────▶   GitHub Pages
+                    GitHub Actions (twice-daily cron) ────────────────────▶   GitHub Pages
 ```
 
-An automated job runs twice a day. It pulls newly finished matches and their events from ESPN's public football API, estimates the real-feel heat (WBGT) at each stadium from Open-Meteo temperature and humidity, appends everything to a growing SQLite store, recomputes every panel, and republishes the static site. Nothing is entered by hand. A missed run self-heals, because the updater rescans a rolling window rather than only the previous day.
+During the tournament an automated job ran twice a day: it pulled newly finished matches and their events from ESPN's public football API, estimated the real-feel heat (WBGT) at each stadium from Open-Meteo temperature and humidity, appended everything to a growing SQLite store, recomputed every panel, and republished the static site. Nothing was entered by hand. With the tournament over, the schedule is retired (`workflow_dispatch` remains for one-off corrections) and the store is frozen at 104 matches.
 
 ## Method, briefly
 
-Three comparisons run side by side: before versus after each break within the same match, which cancels out team quality; hot games versus cooler ones, to separate a break effect from a heat effect; and 2026 with breaks against 2018 and 2022 without them. Effect sizes come with confidence intervals, and thin or uncertain numbers are labeled as such rather than overstated. This is observational, not a controlled experiment, so heat and breaks travel together and early samples are read lightly.
+Three comparisons ran side by side: before versus after each break within the same match, which cancels out team quality; hot games versus cooler ones, to separate a break effect from a heat effect; and 2026 with breaks against 2018 and 2022 without them. A team-strength (Elo) control checks the momentum-reset story. Effect sizes come with confidence intervals, and thin or uncertain numbers are labeled as such rather than overstated. This is observational, not a controlled experiment: heat and breaks travel together, and the dashboard says so.
 
 ## Tech
 
-- **Python standard library only** for the updater and the site builder, so it runs in CI with no dependencies and no API keys.
-- **SQLite** for the persistent per-match store.
+- **Python standard library only** for the updater and the site builder, so it ran in CI with no dependencies and no API keys.
+- **SQLite** for the persistent per-match store (`cooling_economy.db`, in this repo).
 - **Vanilla HTML, CSS and JavaScript** with Chart.js for a single self-contained page.
 - **GitHub Actions** for the scheduled pipeline, **GitHub Pages** for hosting.
-- **Supabase** for the shared, live fan survey.
 
 ## Data sources
 
-- Match events and possession: ESPN public football API.
-- Weather for the WBGT estimate: Open-Meteo hourly forecast API.
+- Match events, possession, attendance and officials: ESPN public football API and match centre.
+- Weather for the WBGT estimate: Open-Meteo hourly and archive APIs.
+- Audiences: Nielsen figures as reported by Sports Media Watch, Variety, Front Office Sports and Hollywood Reporter; tiered estimates elsewhere, labeled in the data.
+- Spot pricing: trade-press ranges (Front Office Sports, Hollywood Reporter, HITC).
 - No-break baselines: 2018 and 2022 World Cups.
 
 ---
 
-Built by **Rodolfo López**. More work at [rodolfo.app](https://rodolfo.app) · [LinkedIn](https://www.linkedin.com/in/rdflopez).
-# cooling-economy
-Do World Cup 2026 hydration breaks change the game Interactive data dashboard.
+Built by **Rodolfo López** · Part of the **Cooling Break** sports analytics lab · [rodolfo.app](https://rodolfo.app) · [LinkedIn](https://www.linkedin.com/in/rdflopez/)

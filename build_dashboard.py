@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Cooling Economy dashboard builder (tabbed, bilingual EN/ES, light/dark).
-Tabs: Home / Analysis / Verdict / Glossary / Survey. Re-run after each match.
+Tabs: Home / Analysis / Verdict / Broadcast / Bracket / About. Final archive build.
 Charts via Chart.js CDN; font via Google Fonts.
 """
 import sqlite3, os, json, datetime
@@ -316,9 +316,6 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
     <button data-t="verdict" data-i18n="nav_verdict"></button>
     <button data-t="broadcast" data-i18n="nav_broadcast"></button>
     <button data-t="bracket" data-i18n="nav_bracket"></button>
-    <button data-t="glossary" data-i18n="nav_glossary"></button>
-    <button data-t="survey" data-i18n="nav_survey"></button>
-    <button data-t="updates" data-i18n="nav_updates"></button>
     <button data-t="about" data-i18n="nav_about"></button>
    </div>
    <div class="tg"><button id="unitBtn" title="units">°F</button><button id="themeBtn" title="theme">☾</button><button id="langBtn" class="lang">ES</button></div>
@@ -348,7 +345,7 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
    </div>
    <div class="banner" style="margin-top:16px" data-i18n="home_banner"></div>
    <div class="foot" data-i18n="home_foot"></div>
-   <div class="foot" style="margin-top:6px">Built by Rodolfo López · <a href="__LINKEDIN__" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">LinkedIn ↗</a></div>
+   <div class="foot" style="margin-top:6px">Built by Rodolfo López · Part of the <b>Cooling Break</b> sports analytics lab · <a href="__LINKEDIN__" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">LinkedIn ↗</a> · <a href="https://rodolfo.app" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">rodolfo.app ↗</a> · <a href="https://github.com/rograph/cooling-economy" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">Code &amp; data ↗</a></div>
   </div>
  </div>
 
@@ -514,41 +511,22 @@ body.dark .hero{box-shadow:var(--glow);border-color:#26345c;background:linear-gr
   </div>
  </div>
 
- <div class="tab" id="tab-updates">
+ <div class="tab" id="tab-about">
+  <div class="card">
+   <div class="sect-h" data-i18n="about_title"></div><div class="sect-s" data-i18n="about_sub"></div>
+   <div class="prose" id="aboutBody" data-i18n="about_body"></div>
+   <div class="foot" style="margin-top:14px">Built by Rodolfo López · <a href="__LINKEDIN__" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">LinkedIn ↗</a> · <a href="https://rodolfo.app" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">rodolfo.app ↗</a> · <a href="https://github.com/rograph/cooling-economy" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">Code &amp; data ↗</a></div>
+  </div>
+  <div class="card">
+   <div class="sect-h" data-i18n="gl_title"></div><div class="sect-s" data-i18n="gl_sub"></div>
+   <div id="glossList"></div>
+  </div>
   <div class="card">
    <div class="sect-h" data-i18n="up_title"></div><div class="sect-s" data-i18n="up_sub"></div>
    <div id="updatesList"></div>
   </div>
  </div>
 
- <div class="tab" id="tab-glossary">
-  <div class="card">
-   <div class="sect-h" data-i18n="gl_title"></div><div class="sect-s" data-i18n="gl_sub"></div>
-   <div id="glossList"></div>
-  </div>
- </div>
-
- <div class="tab" id="tab-about">
-  <div class="card">
-   <div class="sect-h" data-i18n="about_title"></div><div class="sect-s" data-i18n="about_sub"></div>
-   <div class="prose" id="aboutBody" data-i18n="about_body"></div>
-   <div class="foot" style="margin-top:14px">Built by Rodolfo López · <a href="__LINKEDIN__" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">LinkedIn ↗</a> · <a href="https://rodolfo.app" target="_blank" rel="noopener" style="color:var(--gold);font-weight:800;text-decoration:none">rodolfo.app ↗</a></div>
-  </div>
- </div>
-
- <div class="tab" id="tab-survey">
-  <div class="card">
-   <div class="sect-h" data-i18n="sv_title"></div><div class="sect-s" data-i18n="sv_sub"></div>
-   <div id="survey"></div>
-   <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">
-    <button class="btn" id="submitSurvey" data-i18n="sv_submit"></button>
-    <span class="tally" id="tally"></span>
-   </div>
-   <div class="chartbox sm" id="surveyChartBox" style="display:none;margin-top:14px"><canvas id="cSurvey"></canvas></div>
-   <div id="perception"></div>
-   <div class="note" data-i18n="sv_note"></div>
-  </div>
- </div>
 
 </div>
 <script>
@@ -571,7 +549,7 @@ const TR={
   home_lead:'Every 2026 World Cup match paused for a <b>mandatory three-minute hydration break</b> near the 22nd and 67th minute. This project tracked what happened to the football in the ten minutes on either side of those pauses across all 104 matches — Spain lifted the trophy on July 19 — and checked it against two World Cups that had no such breaks.',
   home_howtitle:'How to use this dashboard',
   how1_h:'Analysis',how1_p:'What moves around each break: goals, cards, chances, plus momentum and possession. Benchmarked against no-break World Cups. Filter by match, stage or temperature.',
-  how2_h:'Survey',how2_p:'Tell us what you felt watching. Did the game shift after the breaks? Your answers chart live below the questions.',
+  how2_h:'Broadcast',how2_p:'What the breaks were worth in ad money: every break is two extra minutes of commercial airtime. Sourced spot prices, reported audiences, and a build-your-own estimate slider.',
   home_banner:'<b>Tournament complete.</b> This is the final dataset: all <span class="nn"></span> matches, group stage through the final (Spain 1\u20130 Argentina, after extra time, July 19). Findings describe patterns, not proven cause: with breaks in every 2026 match there is no internal control group, so the yardstick throughout is the 2018 and 2022 World Cups, which had no mandatory breaks.',
   home_foot:'Sources: FBref (events), SofaScore (xG and momentum), Open-Meteo (WBGT estimate). Final build __UPDATED__ \u2014 the tournament ended July 19, 2026 and this dataset is now frozen.',
   an_heat_h:'How hot is it out there?',
@@ -656,7 +634,7 @@ const TR={
 <h4>How the comparison works</h4><p>Three comparisons run side by side. Before versus after each break within the same match, which cancels out how good the teams are. Hot games versus cooler ones, to separate a break effect from a plain heat effect. And 2026 with breaks versus 2018 and 2022 without them. The Verdict tab also tracks the before-versus-after gap with a 95% confidence band, so you can watch it settle as the sample grows.</p>
 <h4>What it cannot tell you</h4><p>This is observational, not a controlled experiment. Heat and breaks travel together, so no single match can fully separate them. Early in the tournament the samples are small and any gap should be read lightly. WBGT here is a location estimate, not a sensor on the pitch. And event data can miss the odd detail. Where a number is thin or uncertain, the dashboard says so rather than overstating it.</p>
 <h4>How the rule got here</h4><p>Cooling breaks are not new. FIFA introduced them at the <b>2014 Brazil World Cup</b>: discretionary, called by the referee after the 30th minute of each half if the pitch-side WBGT passed 32\u00b0C, made up with extra stoppage time. The first one in World Cup history came in the 32nd minute of Netherlands-Mexico, a 2014 round of 16 match. <b>Qatar 2022</b> kept the same discretionary, 32\u00b0C-triggered rule \u2014 but air-conditioned stadiums likely kept pitch conditions under that threshold most nights, so in practice the breaks were rarely if ever called. <b>2026</b> is a different design: two three-minute breaks in every match, near the 22nd and 67th minute, regardless of temperature \u2014 mandatory and weather-independent, not a heat-safety trigger anymore. That is also why 2026 has no built-in no-break control group, and why this project leans on 2018 (no break rule at all) and 2022 (a rule that existed but was seldom used) as its reference points \u2014 useful baselines, but not identically "break-free" in the same way.</p>
-<h4>How it stays current</h4><p>An automated job checks for newly finished matches, pulls their events and weather, appends them to a growing store, recomputes every panel and republishes the site. The date at the top of the page shows when it last refreshed. Nothing is entered by hand, so the verdict you see is the one the current data supports.</p>`,
+<h4>How it stayed current, and why it stopped</h4><p>During the tournament an automated job checked for newly finished matches twice a day, pulled their events and weather, appended them to the store, recomputed every panel and republished the site. Nothing was entered by hand. With the tournament over, that pipeline is retired and the dataset is frozen; the date at the top of the page marks the final build. One pending correction remains: the final's official Nielsen audience, which will be added when published.</p>`,
   br_title:'Knockout bracket',br_sub:'The road to Spain\u2019s title \u2014 every knockout result, Round of 32 through the July 19 final.',
   up_title:'Update log',up_sub:'What has changed in this study and dashboard, newest first.',
   share:'Copy the verdict',shareDone:'Copied. Paste it anywhere.',
@@ -682,13 +660,13 @@ const TR={
    ['2026-06-27','Launch','First build: goal, card and sub windows around each break across the group stage, with a heat filter.'],
   ],
   // dynamic
-  kMatches:'🏟️ Matches',kGoals:'⚽ Goals',kGpm:'🎯 Goals / match',kWbgt:'🔥 Typical heat',
+  kMatches:'🏟️ Matches',kGoals:'⚽ Goals',kGpm:'🎯 Goals / match',kWbgt:'🔥 Typical heat',kRev:'💰 Break ad revenue (base, US)',
   meterLeft:'Could be chance',meterRight:'Looks real',moreShow:'Show the deeper analysis  ▾',moreHide:'Hide the deeper analysis  ▴',
   metrics:['⚽ Goals','🟨 Cards','🔁 Subs','🔀 Lead changes','↩️ Comeback goals'],
   before:'Before',after:'After',beforeAfter:'10 min before → after',
   hvLabel:'The final verdict',
-  hvBig:'A faint cooling after the whistle, nothing the numbers will vouch for yet.',
-  hvBody:(pre,post)=>`Play eases a touch right after each break: ${pre} goals in the ten minutes before versus ${post} after, with chance quality leaning the same way. But that is the kind of gap you would get by chance next to the no-break World Cups, and it has faded as more matches arrived. Straight answer: no, not in any way we can stand behind today. A hint worth watching, not a proven effect.`,
+  hvBig:'A faint cooling after the whistle, and the numbers never vouched for it.',
+  hvBody:(pre,post)=>`Play eases a touch right after each break: ${pre} goals in the ten minutes before versus ${post} after, with chance quality leaning the same way. But that is the kind of gap you would get by chance next to the no-break World Cups, and it has faded as more matches arrived. Straight answer: no. What remains is a mild lean in the data, not a proven effect.`,
   hvFinding:(n)=>`<b>Why "not proven" rather than "case closed."</b> At 66 group matches the post-break dip looked sharper, and the hot-weather split briefly reached the usual bar. Over the knockout rounds it flattened back toward the no-break pattern \u2014 exactly how a small-sample fluke behaves \u2014 and at the final whistle of match ${n} it still sat inside the noise band. The knockouts decided it: the effect faded as the sample grew.`,
   scope1:'1 match',
   distNoteSingle:"Single match: just this game's goals.",
@@ -751,7 +729,7 @@ const TR={
   home_lead:'Cada partido del Mundial 2026 se detuvo por una <b>pausa obligatoria de hidratación de tres minutos</b> cerca del minuto 22 y del 67. Este proyecto siguió qué le pasó al juego en los diez minutos a cada lado de esas pausas en los 104 partidos \u2014 España levantó la copa el 19 de julio \u2014 y lo comparó con dos Mundiales que no tuvieron esas pausas.',
   home_howtitle:'Cómo usar este tablero',
   how1_h:'Análisis',how1_p:'Qué se mueve alrededor de cada pausa: goles, tarjetas, ocasiones, más momentum y posesión. Comparado con Mundiales sin pausas. Filtra por partido, fase o temperatura.',
-  how2_h:'Encuesta',how2_p:'Cuéntanos qué sentiste viendo los partidos. ¿Cambió el juego después de las pausas? Tus respuestas se grafican en vivo debajo de las preguntas.',
+  how2_h:'Transmisión',how2_p:'Cuánto valieron las pausas en publicidad: cada pausa son dos minutos extra de aire comercial. Precios de spots con fuentes, audiencias reportadas y un simulador para armar tu propio estimado.',
   home_banner:'<b>Torneo completado.</b> Este es el conjunto de datos final: los <span class="nn"></span> partidos, desde la fase de grupos hasta la final (España 1\u20130 Argentina, en tiempo extra, 19 de julio). Los hallazgos describen patrones, no causa comprobada: como todos los partidos de 2026 tuvieron pausas, no hay grupo de control interno; el punto de comparación son los Mundiales 2018 y 2022, sin pausas obligatorias.',
   home_foot:'Fuentes: FBref (eventos), SofaScore (xG y momentum), Open-Meteo (estimación de WBGT). Versión final __UPDATED__ \u2014 el torneo terminó el 19 de julio de 2026 y estos datos quedan congelados.',
   an_heat_h:'¿Cuánto calor hace ahí afuera?',
@@ -836,7 +814,7 @@ const TR={
 <h4>Cómo funciona la comparación</h4><p>Corren tres comparaciones en paralelo. Antes contra después de cada pausa dentro del mismo partido, lo que cancela cuán buenos son los equipos. Partidos calurosos contra partidos más frescos, para separar un efecto de la pausa de un simple efecto del calor. Y 2026 con pausas contra 2018 y 2022 sin ellas. La pestaña Veredicto también sigue la diferencia antes-después con una banda de confianza del 95%, para que veas cómo se asienta a medida que crece la muestra.</p>
 <h4>Qué no puede decirte</h4><p>Esto es observacional, no un experimento controlado. El calor y las pausas van juntos, así que ningún partido por sí solo los separa del todo. Al inicio del torneo las muestras son pequeñas y cualquier diferencia debe leerse con cautela. El WBGT aquí es una estimación por ubicación, no un sensor en la cancha. Y los datos de eventos pueden omitir algún detalle. Cuando un número es débil o incierto, el tablero lo dice en vez de exagerarlo.</p>
 <h4>C\u00f3mo se lleg\u00f3 a esta regla</h4><p>Las pausas de hidrataci\u00f3n no son nuevas. la FIFA las introdujo en el <b>Mundial de Brasil 2014</b>: a discreci\u00f3n del \u00e1rbitro, despu\u00e9s del minuto 30 de cada tiempo si el WBGT en la cancha pasaba de 32\u00b0C, compensadas con tiempo a\u00f1adido extra. La primera de la historia del Mundial fue en el minuto 32 de Pa\u00edses Bajos-M\u00e9xico, un octavos de 2014. <b>Catar 2022</b> mantuvo la misma regla discrecional con umbral de 32\u00b0C \u2014 pero los estadios con aire acondicionado probablemente mantuvieron las condiciones de cancha bajo ese umbral casi todas las noches, as\u00ed que en la pr\u00e1ctica casi no se usaron. <b>2026</b> es un dise\u00f1o distinto: dos pausas de tres minutos en cada partido, cerca del minuto 22 y el 67, sin importar la temperatura \u2014 obligatorias e independientes del clima, ya no un disparador de seguridad t\u00e9rmica. Por eso 2026 no tiene un grupo de control sin pausas propio, y por eso este proyecto usa 2018 (sin regla de pausas) y 2022 (con regla, pero casi sin usar) como referencia \u2014 puntos de comparaci\u00f3n \u00fatiles, aunque no "sin pausas" exactamente de la misma forma.</p>
-<h4>C\u00f3mo se mantiene al d\u00eda</h4><p>Un proceso autom\u00e1tico busca partidos reci\u00e9n terminados, trae sus eventos y el clima, los suma a un registro que crece, recalcula cada panel y vuelve a publicar el sitio. La fecha en la parte superior indica cuándo se actualizó por última vez. Nada se ingresa a mano, así que el veredicto que ves es el que sostienen los datos actuales.</p>`,
+<h4>C\u00f3mo se manten\u00eda al d\u00eda, y por qu\u00e9 se detuvo</h4><p>Durante el torneo, un proceso autom\u00e1tico buscaba partidos reci\u00e9n terminados dos veces al d\u00eda, tra\u00eda sus eventos y el clima, los sumaba al registro, recalculaba cada panel y volv\u00eda a publicar el sitio. Nada se ingresaba a mano. Con el torneo terminado, ese proceso queda retirado y los datos congelados; la fecha en la parte superior marca la versi\u00f3n final. Queda una correcci\u00f3n pendiente: la audiencia Nielsen oficial de la final, que se agregar\u00e1 cuando se publique.</p>`,
   br_title:'Llave de eliminatorias',br_sub:'El camino al título de España — todos los resultados de eliminatoria, de dieciseisavos a la final del 19 de julio.',
   up_title:'Registro de cambios',up_sub:'Qué ha cambiado en este estudio y tablero, lo más nuevo primero.',
   share:'Copiar el veredicto',shareDone:'Copiado. Pégalo donde quieras.',
@@ -861,13 +839,13 @@ const TR={
    ['2026-06-27','Bases y xG','Se comparó 2026 con los Mundiales sin pausas de 2018 y 2022 y se confirmó que la calidad de ocasiones (xG) baja junto con los goles.'],
    ['2026-06-27','Lanzamiento','Primera versión: ventanas de goles, tarjetas y cambios alrededor de cada pausa en la fase de grupos, con filtro de calor.'],
   ],
-  kMatches:'🏟️ Partidos',kGoals:'⚽ Goles',kGpm:'🎯 Goles / partido',kWbgt:'🔥 Calor típico',
+  kMatches:'🏟️ Partidos',kGoals:'⚽ Goles',kGpm:'🎯 Goles / partido',kWbgt:'🔥 Calor típico',kRev:'💰 Ingresos por pausas (base, EE. UU.)',
   meterLeft:'Podría ser azar',meterRight:'Parece real',moreShow:'Ver el análisis a fondo  ▾',moreHide:'Ocultar el análisis a fondo  ▴',
   metrics:['⚽ Goles','🟨 Tarjetas','🔁 Cambios','🔀 Cambios de ventaja','↩️ Goles de remontada'],
   before:'Antes',after:'Después',beforeAfter:'10 min antes → después',
   hvLabel:'El veredicto final',
-  hvBig:'Un leve enfriamiento tras el pitazo, pero nada que los números respalden todavía.',
-  hvBody:(pre,post)=>`El juego baja un poquito justo después de cada pausa: ${pre} goles en los diez minutos antes contra ${post} después, y la calidad de ocasiones va en la misma dirección. Pero es del tipo de diferencia que sale por casualidad al lado de los Mundiales sin pausas, y se ha ido desvaneciendo a medida que llegan más partidos. Respuesta directa: no, al menos no de una forma que hoy podamos sostener. Una pista para seguir mirando, no un efecto comprobado.`,
+  hvBig:'Un leve enfriamiento tras el pitazo, que los números nunca llegaron a respaldar.',
+  hvBody:(pre,post)=>`El juego baja un poquito justo después de cada pausa: ${pre} goles en los diez minutos antes contra ${post} después, y la calidad de ocasiones va en la misma dirección. Pero es del tipo de diferencia que sale por casualidad al lado de los Mundiales sin pausas, y se ha ido desvaneciendo a medida que llegan más partidos. Respuesta directa: no. Lo que queda es una inclinación leve en los datos, no un efecto comprobado.`,
   hvFinding:(n)=>`<b>Por qué "no comprobado" y no "caso cerrado".</b> Con 66 partidos de grupos la caída tras la pausa se veía más marcada, y la versión con calor llegó a rozar el umbral usual. En las eliminatorias se aplanó de vuelta hacia el patrón sin pausas \u2014 justo como se comporta un golpe de suerte con muestra pequeña \u2014 y al pitazo final del partido ${n} seguía dentro de la banda de ruido. Las eliminatorias lo decidieron: el efecto se desvaneció al crecer la muestra.`,
   scope1:'1 partido',
   distNoteSingle:'Un solo partido: solo los goles de este juego.',
@@ -1073,7 +1051,7 @@ function showTab(t){state.tab=t;
  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
  if(t==='analysis')renderAnalysis(); if(t==='verdict')renderVerdict();
  if(t==='broadcast')renderBroadcast();
- if(t==='bracket')renderBracket(); if(t==='updates')renderUpdates();
+ if(t==='bracket')renderBracket(); if(t==='about')renderUpdates();
  setTimeout(()=>{armReveal();document.querySelectorAll('#tab-'+t+' .reveal').forEach(e=>e.classList.add('in'));},50);
  window.scrollTo({top:0,behavior:'smooth'});}
 
@@ -1234,7 +1212,7 @@ function meterSVG(p){const pos=isNaN(p)?0:Math.max(0,Math.min(1,1-p/0.3));const 
 function renderHome(){
  const T=L();$('heroArt').innerHTML=heroSVG();const goals=G.reduce((s,g)=>s+g.hg+g.ag,0);
  const wb=G.filter(g=>g.wbgt!=null).map(g=>g.wbgt);
- const k=[[T.kMatches,D.n],[T.kGoals,goals],[T.kGpm,(goals/D.n).toFixed(2)],[T.kWbgt,tU(wb.reduce((a,b)=>a+b,0)/wb.length,1)]];
+ const k=[[T.kMatches,D.n],[T.kGoals,goals],[T.kGpm,(goals/D.n).toFixed(2)],[T.kWbgt,tU(wb.reduce((a,b)=>a+b,0)/wb.length,1)],[T.kRev,fmtM(D.broadcast.total.base)]];
  $('homeKpis').innerHTML=k.map(([l,v])=>`<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
  const o1=aggBreak(G,'b1'),o2=aggBreak(G,'b2');const pre=o1.g[0]+o2.g[0],post=o1.g[1]+o2.g[1];
  const pB=baselineP(post,pre+post);
@@ -1418,46 +1396,14 @@ function drawTracker(){const T=L();
 // ---------- GLOSSARY ----------
 function renderGlossary(){$('glossList').innerHTML=L().gloss.map(([t,d])=>`<div class="gloss"><div class="gt">${t}</div><div class="gd">${d}</div></div>`).join('');}
 
-// ---------- SURVEY ----------
-let answers={};
-const SB_URL="__SBURL__",SB_KEY="__SBKEY__";
-const sbOn=()=>SB_URL.slice(0,4)==="http"&&SB_KEY.length>20;
-const sbHdr=()=>({'apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Content-Type':'application/json'});
-let voted=false;try{voted=localStorage.getItem('ce_voted')==='1';}catch(e){}
-function setSubmit(){const b=$('submitSurvey');if(!b)return;if(voted){b.disabled=true;b.textContent=L().svThanks;}else{b.disabled=false;b.textContent=L().sv_submit;}}
-function buildSurvey(){const T=L();
- $('survey').innerHTML=T.sq.map(q=>`<div class="q"><div class="qt">${q.q}</div><div class="opts" data-q="${q.id}">${q.o.map((o,i)=>`<button data-v="${i}">${o}</button>`).join('')}</div></div>`).join('');
- $('survey').querySelectorAll('.opts').forEach(r=>r.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(voted)return;r.querySelectorAll('button').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');answers[r.dataset.q]=+b.dataset.v;}));
- answers={};setSubmit();tallyFn();}
-const loadR=()=>{try{return JSON.parse(localStorage.getItem('ce_survey')||'[]');}catch(e){return[];}};
-const saveR=r=>{try{localStorage.setItem('ce_survey',JSON.stringify(r));}catch(e){}};
-function localAgg(r){const m={};r.forEach(x=>['b1feel','b2feel'].forEach(q=>{if(x[q]!=null){const k=q+':'+x[q];m[k]=(m[k]||0)+1;}}));return m;}
-async function tallyFn(){const T=L();
- if(sbOn()){try{const rows=await fetch(SB_URL+'/rest/v1/poll_counts?select=id,n',{headers:sbHdr()}).then(r=>r.json());
-   const m={};(rows||[]).forEach(x=>m[x.id]=x.n);const tot=[0,1,2,3].reduce((s,i)=>s+(m['b1feel:'+i]||0),0);
-   $('tally').textContent=T.svTally(tot);drawSurveyCounts(m);}catch(e){$('tally').textContent=T.svTally(0);}}
- else{const r=loadR();$('tally').textContent=T.svTally(r.length);if(r.length)drawSurveyCounts(localAgg(r));}}
-function drawSurveyCounts(m){const T=L();$('surveyChartBox').style.display='block';
- const c=[0,1,2,3].map(i=>[m['b1feel:'+i]||0,m['b2feel:'+i]||0]);
- if(surveyChart)surveyChart.destroy();Chart.defaults.color=chartColor();
- surveyChart=new Chart($('cSurvey'),{type:'bar',data:{labels:T.svFeel,datasets:[{label:T.svAfter1,data:c.map(x=>x[0]),backgroundColor:GREY,borderRadius:4},{label:T.svAfter2,data:c.map(x=>x[1]),backgroundColor:GREEN,borderRadius:4}]},
-  options:{plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
- drawPerception(m);}
-function drawPerception(m){const T=L();const el=$('perception');if(!el)return;
- const more=(m['b1feel:0']||0)+(m['b2feel:0']||0),less=(m['b1feel:1']||0)+(m['b2feel:1']||0),noc=(m['b1feel:2']||0)+(m['b2feel:2']||0);
- if(more+less+noc<8){el.innerHTML=T.perceptionLow;return;}
- const noticed=more+less,morePct=noticed?Math.round(more/noticed*100):0;
- const o1=aggBreak(G,'b1'),o2=aggBreak(G,'b2'),pre=o1.g[0]+o2.g[0],post=o1.g[1]+o2.g[1];
- el.innerHTML=T.perception(morePct,noticed,pre,post);}
-
 // ---------- refresh on toggle ----------
 function fullRefresh(){
- applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();fillStageSelect();
+ applyStatic();renderHome();renderGlossary();renderUpdates();fillMatchSelect();fillStageSelect();
  if(distChart){distChart.destroy();histChart.destroy();xgChart.destroy();momChart.destroy();subChart.destroy();welChart.destroy();if(heatScatter)heatScatter.destroy();made.analysis=false;}
  if(bcStageChart){bcStageChart.destroy();bcStageChart=null;} if(bcScatter){bcScatter.destroy();bcScatter=null;}
  if(state.tab==='analysis')renderAnalysis(); if(state.tab==='verdict')renderVerdict();
  if(state.tab==='broadcast')renderBroadcast();
- if(state.tab==='bracket')renderBracket(); if(state.tab==='updates')renderUpdates();
+ if(state.tab==='bracket')renderBracket(); if(state.tab==='about')renderUpdates();
 }
 
 // ---------- wiring ----------
@@ -1476,17 +1422,10 @@ $('shareBtn').onclick=()=>{const T=L();const o1=aggBreak(G,'b1'),o2=aggBreak(G,'
  const txt=T.shareText($('vAnswer').textContent||'',pre,post,D.n);const b=$('shareBtn');
  const done=()=>{b.textContent=T.shareDone;setTimeout(()=>b.textContent=T.share,2000);};
  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done,done);}else{done();}};
-$('submitSurvey').onclick=async()=>{const T=L();const choices=Object.keys(answers).map(k=>k+':'+answers[k]);
- if(!choices.length)return;
- if(sbOn()){const b=$('submitSurvey');b.disabled=true;
-   try{const res=await fetch(SB_URL+'/rest/v1/rpc/vote',{method:'POST',headers:sbHdr(),body:JSON.stringify({choices})});if(!res.ok)throw 0;
-     voted=true;try{localStorage.setItem('ce_voted','1');}catch(e){}setSubmit();tallyFn();}
-   catch(e){b.disabled=false;b.textContent=T.svErr;setTimeout(setSubmit,2500);}}
- else{const r=loadR();r.push(Object.assign({ts:new Date().toISOString()},answers));saveR(r);voted=true;try{localStorage.setItem('ce_voted','1');}catch(e){}setSubmit();tallyFn();}};
 
 // ---------- init ----------
 document.body.classList.toggle('dark',state.theme==='dark');
-applyStatic();renderHome();renderGlossary();buildSurvey();fillMatchSelect();fillStageSelect();armReveal();
+applyStatic();renderHome();renderGlossary();renderUpdates();fillMatchSelect();fillStageSelect();armReveal();
 </script>
 </body></html>"""
 
