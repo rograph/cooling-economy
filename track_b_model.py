@@ -91,7 +91,20 @@ AUD_TIER = {
 REPORTED_AUDIENCE = {
     "WC2026-MD1-UNS-PAR": (15_990_000, "Nielsen via Front Office Sports (2026-06-12)"),
     "WC2026-20260706-MEX-ENG": (21_740_000, "Nielsen via Sports Media Watch (2026-07-06, avg; peak 25.72M)"),
-    "WC2026-20260707-UNS-BEL": (30_000_000, "Nielsen via Hollywood Reporter (2026-07-07, avg; peak 36.9M)"),
+    "WC2026-20260707-UNS-BEL": (33_100_000, "Nielsen via Sports Media Watch (final figure; Hollywood Reporter fast-national was 30.0M avg)"),
+    "WC2026-20260702-UNS-BOH": (26_400_000, "Nielsen via Sports Media Watch (R32, Fox)"),
+    "WC2026-20260711-NOR-ENG": (21_800_000, "Nielsen via Sports Media Watch (QF, Fox)"),
+    "WC2026-20260714-FRA-SPA": (11_500_000, "Nielsen via Variety (SF, Fox avg; Yahoo/TAD figure 13.1M)"),
+    "WC2026-20260715-ENG-ARG": (15_100_000, "Nielsen via Variety (SF, Fox avg; Yahoo/TAD 16.9M; record Eng-lang SF)"),
+}
+
+# Audience ESTIMATE overrides where the flat tier is clearly wrong but no
+# Nielsen figure exists yet — still estimates, still labeled as such.
+AUD_OVERRIDE = {
+    "WC2026-20260718-FRA-ENG": (6_000_000,
+        "estimate: 2022 3rd-place drew 2.9M on Fox; scaled ~2x for 2026 uplift (low conf)"),
+    "WC2026-20260719-SPA-ARG": (18_000_000,
+        "conservative estimate pending Nielsen (2022 final 16.78M Eng-lang; SMW pre-match forecast 35.2M incl. pre-show)"),
 }
 
 def tier(home, away):
@@ -122,6 +135,8 @@ def main():
         if mid in REPORTED_AUDIENCE:
             aud, aud_src = REPORTED_AUDIENCE[mid]
             n_reported += 1
+        elif mid in AUD_OVERRIDE:
+            aud, aud_src = AUD_OVERRIDE[mid]
         else:
             aud, aud_src = AUD_TIER[band][tg], f"tiered estimate ({band}/{tg}, low conf)"
         conf = "medium (sourced pricing)" if band != "final" else "low (assumption, unsourced)"
@@ -151,24 +166,31 @@ def main():
     print("By stage (base scenario):")
     for st, vals in sorted(by_stage.items()):
         print(f"  {st:6}: ${vals['base']/1e6:6.1f}M")
-    # extrapolate to full 104-match tournament: 8 remaining fixtures
-    # (4 QF + 2 SF + 1 3P + 1 F), priced at their own stage band rather than
-    # a flat linear scale (v1's method, now replaced).
+    # Remaining fixtures = the 104-match template minus what is in the store
+    # (zero once the tournament completed on 2026-07-19). Any genuinely
+    # remaining fixture is priced at its stage band, marquee tier (ASSUMPTION).
+    TEMPLATE = {"group": 72, "R32": 16, "R16": 8, "QF": 4, "SF": 2, "3P": 1, "F": 1}
+    played = {st: 0 for st in TEMPLATE}
+    for (st,) in con.execute("SELECT stage FROM matches"):
+        if st in played:
+            played[st] += 1
     remaining_est = {"low": 0, "base": 0, "high": 0}
-    for st, count in (("QF", 4), ("SF", 2), ("3P", 1), ("F", 1)):
+    n_left = 0
+    for st, count in TEMPLATE.items():
+        left = max(0, count - played[st])
+        n_left += left
         band = stage_band(st)
-        # assume a marquee-tier matchup for remaining knockout fixtures (typical
-        # for QF onward) — ASSUMPTION, flagged.
         for sc in ("low", "base", "high"):
-            remaining_est[sc] += count * 2 * SPOTS[sc] * PRICE[band]["marquee"][sc]
-    print("Remaining fixtures (4 QF + 2 SF + 1 3rd-place + 1 Final), assumed marquee tier:")
-    for sc in ("low", "base", "high"):
-        print(f"  {sc:4}: +${remaining_est[sc]/1e6:6.1f}M")
-    print("Projected full 104-match tournament total:")
-    for sc in ("low", "base", "high"):
-        full = tot[sc] + remaining_est[sc]
-        print(f"  {sc:4}: ${full/1e6:6.0f}M")
-    print("Sanity check vs published group-stage-era estimate: floor ~$250M, high ~$500-600M (Hollywood Reporter).")
+            remaining_est[sc] += left * 2 * SPOTS[sc] * PRICE[band]["marquee"][sc]
+    if n_left:
+        print(f"Remaining fixtures ({n_left}), assumed marquee tier:")
+        for sc in ("low", "base", "high"):
+            print(f"  {sc:4}: +${remaining_est[sc]/1e6:6.1f}M")
+        print("Projected full 104-match tournament total:")
+        for sc in ("low", "base", "high"):
+            print(f"  {sc:4}: ${(tot[sc]+remaining_est[sc])/1e6:6.0f}M")
+    else:
+        print("All 104 fixtures played — totals above are the FINAL tournament figures, not a projection.")
     con.close()
 
 if __name__ == "__main__":
