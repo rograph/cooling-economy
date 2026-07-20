@@ -1,9 +1,9 @@
 name: Update dashboard
 
 on:
-  schedule:
-    - cron: "0 13 * * *"
-    - cron: "0 23 * * *"
+  # Tournament ended 2026-07-19 — dataset is frozen. The schedule is retired;
+  # manual runs remain possible for one-off corrections (e.g. when Nielsen
+  # publishes the final's audience).
   workflow_dispatch: {}
 
 permissions:
